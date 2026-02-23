@@ -1,0 +1,29 @@
+server_port: "8080"
+db_path: "./reminder.db"
+api_token: "xxx"
+
+telegram:
+  bot_token: "<bot-token>"
+
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  user: "user"
+  pass: "pass"
+  from: "ops@example.com"
+
+scheduler:
+  workers: 10
+  queue_size: 100
+  max_lateness: 1m
+
+queue:
+  type: "memory"
+  workers: 10
+  size: 1000
+  rate_limit_per_sec: 20
+
+webhook:
+  enabled: true
+  base_url: "https://webhook.kakacn.com"
+  timeout_seconds: 5

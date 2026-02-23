@@ -1,0 +1,16 @@
+services:
+  reminder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kind-reminder
+    restart: always
+    environment:
+      - DB_PATH=/app/data/reminder.db
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+

@@ -1,0 +1,37 @@
+# Runtime config (keep example file in repo)
+config.yaml
+
+# Database/runtime files
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Build artifacts
+bin/
+dist/
+*.out
+
+# Logs/temp
+*.log
+*.err
+.DS_Store
+tmp/
+.tmp/
+
+# Common local documents (avoid uploading private files)
+*.doc
+*.docx
+*.pdf
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+
+# Ignore scripts
+scripts/
+
+reminder.db
+reminder
+data.tar.gz
+*.tar.gz

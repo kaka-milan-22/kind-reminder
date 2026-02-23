@@ -1,0 +1,286 @@
+KIND REMINDER v2 — SYSTEM SPECIFICATION
+Single-machine cron job orchestration engine. Go + SQLite (WAL). No external dependencies.
+HTTP API on port 8080. Bearer token auth on all endpoints except GET /health.
+
+CORE MODEL
+  Provider  = delivery credentials (telegram bot_token / SMTP config / webhook base_url)
+  Channel   = delivery target (chat_id / email to / webhook url) + optional provider_id
+  Job       = cron schedule + ordered Steps[]
+  Step      = atomic execution unit (shell | webhook | notification)
+  Execution = one job run instance (status: running | success | failed)
+  StepRun   = one step execution result within an Execution
+
+EXECUTION SEMANTICS
+  - Steps execute serially in order_index ASC order
+  - Each step: up to step.retry attempts (default 1 = no retry)
+  - Retry backoff: attempt 1→2s, 2→5s, 3→10s (fixed)
+  - Step timeout enforced via context cancel (default 300s if not set)
+  - StepResult.Status determines success/failure (never infer from Error string)
+  - If step fails AND continue_on_error=false → execution marked failed, remaining steps skipped
+  - If step fails AND continue_on_error=true → failure recorded, execution continues
+  - Template render failure → step status=failed, error written to execution_step.error
+
+CONCURRENCY
+  - Same job: at most 1 running execution at any time (DB partial unique index enforces this)
+  - INDEX: UNIQUE ON executions(job_id) WHERE status='running' AND job_id != '__adhoc__'
+  - job_id='__adhoc__' (POST /send): multiple concurrent executions allowed
+  - Jobs dispatch via in-memory worker pool (default 10 workers)
+  - Scheduler tick: 30s, evaluates next_run_at <= current_minute (truncated to minute)
+  - Missed runs: skipped and fast-forwarded to next future slot (no catch-up replay, max_lateness=1m default)
+
+TEMPLATE SYSTEM
+  Engine: Go text/template
+  Context keys:
+    .job   → *model.Job  {ID, CronExpr, Timezone, Title, Enabled, NextRunAt, LastRunAt, CreatedAt, UpdatedAt}
+    .steps → map[string]StepResult  keyed by step_id
+    .now   → time.Time
+  StepResult fields:
+    .Status   string  "success" | "failed"
+    .ExitCode int     (shell only; 0 for other types)
+    .Stdout   string  (truncated to 8192 bytes)
+    .Stderr   string  (truncated to 8192 bytes)
+    .Error    string  system-level error message
+  Access pattern: (index .steps "step_id").Stdout
+  Error handling: parse/execute error → step failed, error in execution_step.error, no panic
+
+DATA TYPES
+
+  Job {
+    id         string    UUID
+    cron       string    5-field cron expression
+    timezone   string    IANA timezone (e.g. "Asia/Shanghai")
+    title      string
+    enabled    bool
+    next_run_at time
+    last_run_at time      (omitempty)
+    created_at  time
+    updated_at  time
+    steps      []Step    (included in GET /jobs/:id and POST response; omitted in GET /jobs list)
+  }
+
+  Step {
+    id               string  UUID (generated server-side)
+    job_id           string  (omitempty in responses)
+    step_id          string  business identifier, UNIQUE per job, used in template references
+    order_index      int     execution order, UNIQUE per job
+    type             string  "shell" | "webhook" | "notification"
+    config           object  type-specific config (see STEP CONFIGS)
+    timeout          int     seconds; 0 = use default 300s
+    retry            int     max attempts; 0 or 1 = no retry
+    continue_on_error bool   default false
+  }
+
+  Execution {
+    id           string
+    job_id       string  "__adhoc__" for POST /send executions
+    scheduled_at time
+    started_at   time    (omitempty)
+    finished_at  time    (omitempty)
+    status       string  "running" | "success" | "failed"
+    error        string  (omitempty)
+    steps        []ExecutionStep
+  }
+
+  ExecutionStep {
+    id           string
+    execution_id string  (omitempty)
+    step_id      string
+    type         string
+    status       string  "success" | "failed"
+    started_at   time    (omitempty)
+    finished_at  time    (omitempty)
+    exit_code    int     (omitempty)
+    stdout       string  (omitempty, truncated 8KB)
+    stderr       string  (omitempty, truncated 8KB)
+    error        string  (omitempty)
+  }
+
+  Provider {
+    id         string
+    type       string  "telegram" | "email" | "webhook"
+    config     object  type-specific (see PROVIDER CONFIGS)
+    created_at time
+  }
+
+  Channel {
+    id          string
+    type        string  "telegram" | "email" | "webhook"
+    provider_id string  (omitempty; if absent, uses global config.yaml fallback)
+    config      object  type-specific (see CHANNEL CONFIGS)
+    created_at  time
+  }
+
+STEP CONFIGS
+
+  shell config:
+    { "script": "/app/scripts/name.sh" }
+    script must be absolute path; container must have file at that path
+    exit_code != 0 → failed
+    stdout/stderr captured and stored
+
+  webhook config:
+    {
+      "method": "POST",              (default "POST")
+      "url": "https://...",          (required; absolute URL)
+      "headers": { "K": "V|template" },
+      "body_template": "string|template"
+    }
+    headers values and body_template are rendered via text/template before sending
+    HTTP status >= 400 → failed
+    response body stored in stdout (truncated 8KB)
+    client timeout: 10s (not overridden by step.timeout in current impl)
+
+  notification config:
+    {
+      "channels": ["channel_id", ...],    (required; must be pre-created channels)
+      "message_template": "string|template",  (required)
+      "title_template": "string|template"     (optional; overrides Job.Title; empty = use Job.Title)
+    }
+    message_template and title_template rendered via text/template
+    sends to all listed channels; last error wins if multiple fail
+
+PROVIDER CONFIGS
+
+  telegram: { "bot_token": "string" }
+  email:    { "host": "string", "port": int, "user": "string", "pass": "string", "from": "string" }
+  webhook:  { "base_url": "string", "timeout_seconds": int }
+
+CHANNEL CONFIGS
+
+  telegram: { "chat_id": "string" }   (string, not int, even for numeric IDs)
+  email:    { "to": "string" }
+  webhook:  { "url": "string" }       (absolute URL or path relative to provider base_url)
+
+API ENDPOINTS
+
+  GET  /health          → 200 "ok"  (no auth)
+  GET  /stats           → Stats object:
+                          {
+                            "scheduler_running":   bool,    running state of the scheduler
+                            "jobs_total":          int,     count of enabled jobs
+                            "queue_size":          int,     current pending items in dispatch queue
+                            "workers":             int,     number of worker goroutines
+                            "queue_type":          string,  "memory" (only supported type)
+                            "rate_limit_per_sec":  int,     0 = unlimited
+                            "telegram_ok":         bool,    reachability check via getMe API
+                            "smtp_ok":             bool,    TCP dial check to configured host:port
+                            "webhook_ok":          bool,    HEAD/GET /health check to base_url
+                            "last_execution_at":   time,    (omitempty) last finished execution time
+                            "failures_last_hour":  int      count of failed executions in past 60 min
+                          }
+  
+  POST   /providers     body: {id, type, config}              → 201 {id}
+  GET    /providers     →  []Provider
+  DELETE /providers/:id → 204
+
+  POST   /channels      body: {id, type, provider_id?, config} → 201 {id}
+  GET    /channels      → []Channel
+  DELETE /channels/:id  → 204
+
+  POST   /jobs          body: {cron, timezone, title, enabled, steps[]}  → 201 {id}
+  GET    /jobs          → []Job  (steps field omitted)
+  GET    /jobs/:id      → Job (with steps[])
+  PATCH  /jobs/:id      body: {cron?, timezone?, title?, enabled?, steps?[]}  → 200 Job
+                        steps field: if present → full replacement of all steps
+                        steps field: if absent  → steps unchanged
+  DELETE /jobs/:id      → 204  (cascades to job_steps)
+
+  GET  /executions      params: limit(default 50, max 500), offset(default 0),
+                                job_id(filter), include_adhoc(bool, default false)
+                        → []Execution (each includes steps[])
+
+  POST /send            body: {timezone?, steps: [{step_id, order_index, type, config, timeout?, retry?, continue_on_error?}]}
+                        timezone: IANA string; affects .now and time rendering in all templates for this execution
+                        → 200 {execution_id, status, steps: []ExecutionStep}
+                        job_id internally set to "__adhoc__"
+                        synchronous: waits for all steps to complete before responding
+
+ERROR RESPONSES
+  All errors: {"error": "message string"}
+  400 Bad Request   — validation failure, unknown fields (DisallowUnknownFields)
+  401 Unauthorized  — missing or wrong Bearer token
+  404 Not Found     — resource does not exist
+  500 Internal      — server/db error
+
+SCHEDULER BEHAVIOR
+  - tick interval: 30s
+  - due condition: next_run_at <= floor(now, minute)
+  - dispatch: INSERT execution(status=running, job_id, scheduled_at) — conflicts on unique constraints → skip
+  - after dispatch: advance job next_run_at, last_run_at
+  - NO-CATCHUP MODE (default): missed runs are never replayed
+      lateness = now.In(jobTZ) - scheduledAt.In(jobTZ)
+      if lateness > max_lateness (default 1m):
+          FastForwardJobNextRun to cron.Next(now)  [guaranteed > now via loop]
+          return without creating execution or running any step
+  - Applies both on startup (stale next_run_at in DB) and during normal ticks
+  - Lateness computed in job's own timezone (DST-safe)
+  - next_run_at fast-forward always uses cron.Next(now), never cron.Next(old_scheduled_at)
+  - job with no steps: execution completes immediately as success
+
+DATABASE TABLES
+  jobs              (id, cron_expr, timezone, title, enabled, next_run_at, last_run_at, created_at, updated_at)
+  job_steps         (id, job_id FK, step_id, order_index, type, config_json, timeout, retry, continue_on_error)
+                    UNIQUE(job_id, step_id), UNIQUE(job_id, order_index)
+  executions        (id, job_id, scheduled_at, started_at, finished_at, status, error)
+                    UNIQUE(job_id, scheduled_at)
+  execution_steps   (id, execution_id FK, step_id, type, status, started_at, finished_at, exit_code, stdout, stderr, error)
+  channels          (id, type, provider_id, config, created_at)
+  providers         (id, type, config, created_at)
+  schema_migrations (version, applied_at)
+  INDEX: uniq_running_job ON executions(job_id) WHERE status='running' AND job_id != '__adhoc__'
+
+TYPICAL USAGE PATTERNS
+
+  Pattern 1: Shell script + notification on result
+    Step 1 (shell):        run /app/scripts/backup.sh
+    Step 2 (notification): message_template references (index .steps "backup").Stdout
+
+  Pattern 2: Webhook with dynamic body from previous step
+    Step 1 (shell):   run script, capture output
+    Step 2 (webhook): body_template uses (index .steps "step1").ExitCode
+
+  Pattern 3: POST /send from CI pipeline
+    POST /send with notification step → synchronous response with result
+
+  Pattern 4: continue_on_error for cleanup steps
+    Step 1: main task (continue_on_error=false)
+    Step 2: cleanup/notify (continue_on_error=true, always runs even if step 1 fails)
+
+CONFIG FILE (config.yaml)
+  server_port:  string  (default "8080")
+  db_path:      string  (default "./reminder.db")
+  api_token:    string  REQUIRED
+  telegram.bot_token: string   (global fallback)
+  smtp.host/port/user/pass/from: string/int/string/string/string
+  scheduler.workers:   int
+  scheduler.queue_size: int
+  scheduler.max_lateness: duration  (default "1m"; missed runs older than this are skipped, never replayed)
+  queue.type:          "memory"
+  queue.workers:       int
+  queue.size:          int
+  queue.rate_limit_per_sec: int
+  webhook.enabled:     bool
+  webhook.base_url:    string
+  webhook.timeout_seconds: int
+
+ENV OVERRIDES (higher priority than config.yaml)
+  API_TOKEN, DB_PATH, SERVER_PORT, CONFIG_FILE,
+  TELEGRAM_BOT_TOKEN, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM,
+  QUEUE_TYPE, QUEUE_WORKERS, QUEUE_SIZE, RATE_LIMIT_PER_SEC,
+  WEBHOOK_ENABLED, WEBHOOK_BASE_URL, WEBHOOK_TIMEOUT_SECONDS
+
+KNOWN LIMITATIONS (current impl)
+  - webhook: client timeout hardcoded to 10s; step.timeout 对 webhook 无效
+      (step.timeout still cancels the context, but http.Client.Timeout=10s fires first)
+  - notification: 多 channel 失败时 last error wins，无 per-channel 结果
+  - shell: 仅支持 absolute path，不支持 inline script
+  - stdout/stderr: 硬截断 8192 bytes，不可配置
+  - webhook body_template: 纯字符串拼接，JSON 需手动转义
+  - GET /executions: offset-based pagination only; no cursor; large offsets are slow on big datasets
+  - no distributed scheduling; single-node only
+
+PLANNED / NOT YET IMPLEMENTED
+  - webhook body_template: JSON object mode to avoid manual escape of inner quotes
+  - per-step retry policy with configurable backoff intervals
+  - GET /executions cursor-based pagination
+  - per-channel result in notification step (currently last-error-wins)

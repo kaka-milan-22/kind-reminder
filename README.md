@@ -47,7 +47,7 @@ Execution = 一次 Job 触发的完整运行记录
 | `type` | string | ✅ | — | Step 类型：`shell` / `webhook` / `notification` |
 | `timeout` | int | ❌ | 300 | 超时秒数，超时后强制终止该 Step |
 | `retry` | int | ❌ | 1 | 最大执行次数（1 = 不重试），失败后按 2s → 5s → 10s 退避重试 |
-| `continue_on_error` | bool | ❌ | false | 该 Step 失败后是否继续执行后续 Step |
+| `continue_on_error` | bool | ❌ | true | 该 Step 失败后是否继续执行后续 Step |
 | `config` | object | ✅ | — | Step 具体配置，内容因 `type` 而不同，见下方各类型说明 |
 
 ---
@@ -320,7 +320,7 @@ curl "http://localhost:8080/executions?include_adhoc=true" \
 | `config` | object | ✅ | — | Step 具体配置，内容因 `type` 而不同（见下方各类型说明） |
 | `timeout` | int | ❌ | 300 | 超时秒数，超时后强制终止该 Step |
 | `retry` | int | ❌ | 1 | 最大执行次数（1 = 不重试），失败后按 2s → 5s → 10s 退避重试 |
-| `continue_on_error` | bool | ❌ | false | 该 Step 失败后是否继续执行后续 Step |
+| `continue_on_error` | bool | ❌ | true | 该 Step 失败后是否继续执行后续 Step |
 
 ```bash
 curl -X POST http://localhost:8080/send \
@@ -440,7 +440,7 @@ docker compose up -d --build
 |------|-------|------|
 | `timeout` | 300s | 超时秒数，超时后强制终止 |
 | `retry` | 1 | 最大执行次数（1=不重试）|
-| `continue_on_error` | false | 失败后是否继续执行后续 step |
+| `continue_on_error` | true | 失败后是否继续执行后续 step |
 
 Retry backoff：2s → 5s → 10s（固定）
 

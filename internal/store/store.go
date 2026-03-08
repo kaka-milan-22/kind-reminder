@@ -144,7 +144,7 @@ type TEXT NOT NULL,
 config_json TEXT NOT NULL,
 timeout INTEGER NOT NULL DEFAULT 0,
 retry INTEGER NOT NULL DEFAULT 0,
-continue_on_error INTEGER NOT NULL DEFAULT 0,
+continue_on_error INTEGER NOT NULL DEFAULT 1,
 UNIQUE(job_id, step_id),
 UNIQUE(job_id, order_index),
 FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE

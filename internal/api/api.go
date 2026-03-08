@@ -80,7 +80,7 @@ Type            string          `json:"type"`
 Config          json.RawMessage `json:"config"`
 Timeout         int             `json:"timeout"`
 Retry           int             `json:"retry"`
-ContinueOnError bool            `json:"continue_on_error"`
+ContinueOnError *bool           `json:"continue_on_error"`
 }
 
 type createJobRequest struct {
@@ -114,7 +114,7 @@ Type:            r.Type,
 Config:          cfg,
 Timeout:         r.Timeout,
 Retry:           r.Retry,
-ContinueOnError: r.ContinueOnError,
+ContinueOnError: r.ContinueOnError == nil || *r.ContinueOnError,
 })
 }
 return steps

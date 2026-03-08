@@ -21,7 +21,7 @@ Type            string          `json:"type"`
 Config          json.RawMessage `json:"config"`
 Timeout         int             `json:"timeout"`
 Retry           int             `json:"retry"`
-ContinueOnError bool            `json:"continue_on_error"`
+ContinueOnError *bool           `json:"continue_on_error"`
 }
 
 type sendRequest struct {
@@ -99,7 +99,7 @@ Type:            sr.Type,
 Config:          cfg,
 Timeout:         sr.Timeout,
 Retry:           sr.Retry,
-ContinueOnError: sr.ContinueOnError,
+ContinueOnError: sr.ContinueOnError == nil || *sr.ContinueOnError,
 }
 
 exec, ok := execs[step.Type]

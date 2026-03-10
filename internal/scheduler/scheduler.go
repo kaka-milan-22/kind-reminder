@@ -79,6 +79,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 s.running.Store(true)
 defer s.running.Store(false)
 
+// Recover executions left in "running" state from a previous crash or restart.
+if n, err := s.store.RecoverStaleExecutions(ctx); err != nil {
+s.logger.Error("recover stale executions failed", "error", err)
+} else if n > 0 {
+s.logger.Warn("recovered stale executions on startup", "count", n)
+}
+
 s.dispatchQ.StartWorkers(ctx, func(c context.Context, t task) error {
 s.handleTask(c, t)
 return nil

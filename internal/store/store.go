@@ -413,6 +413,21 @@ string(status), finishedAt.UTC(), nullableString(errText), id)
 return err
 }
 
+// RecoverStaleExecutions marks any execution that was left in "running" state
+// (e.g. from a previous crash or ungraceful restart) as failed. Returns the
+// number of executions that were recovered.
+func (s *Store) RecoverStaleExecutions(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE executions
+SET status='failed', finished_at=?, error='execution interrupted: server restart'
+WHERE status='running'`, time.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 func (s *Store) AdvanceJobSchedule(ctx context.Context, jobID string, scheduledAt, nextRunAt time.Time) error {
 _, err := s.db.ExecContext(ctx, `UPDATE jobs SET next_run_at=?, last_run_at=?, updated_at=? WHERE id=?`,
 nextRunAt.UTC(), scheduledAt.UTC(), time.Now().UTC(), jobID)

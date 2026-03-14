@@ -67,7 +67,7 @@ func main() {
 		SMTPPort:      cfg.SMTPPort,
 		Webhook:       cfg.Webhook,
 		Scheduler:     s,
-	}, notifiers)
+	}, notifiers, s)
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.ServerPort),
 		Handler:      apiServer.Router(),

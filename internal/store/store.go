@@ -70,7 +70,8 @@ migrations := []migration{
 {2, migration2StepsTables},
 {3, migration3RunningIndex},
 {4, migration4DropLegacyJobColumns},
-}
+		{5, migration5ExecutionTriggerFields},
+	}
 
 for _, m := range migrations {
 if m.version <= current {
@@ -191,6 +192,57 @@ return fmt.Errorf("drop column %s: %w", col, err)
 }
 return nil
 }
+
+func migration5ExecutionTriggerFields(db *sql.DB) error {
+stmts := []string{
+// Recreate executions table with new fields
+`CREATE TABLE IF NOT EXISTS executions_new (
+id TEXT PRIMARY KEY,
+job_id TEXT NOT NULL,
+scheduled_at TIMESTAMP,
+started_at TIMESTAMP,
+finished_at TIMESTAMP,
+status TEXT NOT NULL,
+error TEXT,
+trigger_type TEXT NOT NULL DEFAULT 'cron',
+triggered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+triggered_by TEXT,
+idempotency_key TEXT
+)`,
+// Copy existing data; use started_at as triggered_at for old rows
+`INSERT INTO executions_new
+SELECT id, job_id, scheduled_at, started_at, finished_at, status, error,
+'cron' AS trigger_type,
+COALESCE(started_at, CURRENT_TIMESTAMP) AS triggered_at,
+NULL AS triggered_by,
+NULL AS idempotency_key
+FROM executions`,
+// Drop old indexes that reference executions
+`DROP INDEX IF EXISTS uniq_running_job`,
+`DROP INDEX IF EXISTS idx_exec_job_sched`,
+// Swap tables
+`DROP TABLE executions`,
+`ALTER TABLE executions_new RENAME TO executions`,
+// Recreate indexes
+`CREATE UNIQUE INDEX IF NOT EXISTS uniq_running_job ON executions(job_id) WHERE status='running' AND job_id != '__adhoc__'`,
+`CREATE INDEX IF NOT EXISTS idx_exec_job_sched ON executions(job_id, scheduled_at) WHERE scheduled_at IS NOT NULL`,
+`CREATE UNIQUE INDEX IF NOT EXISTS uniq_idempotency ON executions(job_id, idempotency_key) WHERE idempotency_key IS NOT NULL`,
+}
+for _, s := range stmts {
+if _, err := db.Exec(s); err != nil {
+return fmt.Errorf("migration5 %q: %w", s[:min(40, len(s))], err)
+}
+}
+return nil
+}
+
+func min(a, b int) int {
+if a < b {
+return a
+}
+return b
+}
+
 
 // --- Job CRUD ---
 
@@ -371,13 +423,23 @@ return out, rows.Err()
 // --- Executions ---
 
 // InsertRunningExecution atomically inserts an execution with status=running.
-// Returns (false, nil) on unique constraint conflict (either same tick or already running).
-func (s *Store) InsertRunningExecution(ctx context.Context, id, jobID string, scheduledAt time.Time) (bool, error) {
+// scheduledAt is nil for manual/adhoc triggers.
+// idempotencyKey is optional; if non-empty, UNIQUE(job_id, idempotency_key) prevents duplicate inserts.
+// Returns (false, nil) on unique constraint conflict (already running or same scheduled_at).
+func (s *Store) InsertRunningExecution(ctx context.Context, id, jobID string, scheduledAt *time.Time, triggerType, triggeredBy, idempotencyKey string) (bool, error) {
 now := time.Now().UTC()
+var schedVal any
+if scheduledAt != nil {
+schedVal = scheduledAt.UTC()
+}
+var idemKey any
+if idempotencyKey != "" {
+idemKey = idempotencyKey
+}
 _, err := s.db.ExecContext(ctx, `
-INSERT INTO executions(id, job_id, scheduled_at, started_at, status)
-VALUES(?, ?, ?, ?, 'running')
-`, id, jobID, scheduledAt.UTC(), now)
+INSERT INTO executions(id, job_id, scheduled_at, started_at, status, trigger_type, triggered_at, triggered_by, idempotency_key)
+VALUES(?, ?, ?, ?, 'running', ?, ?, ?, ?)
+`, id, jobID, schedVal, now, triggerType, now, nullableString(triggeredBy), idemKey)
 if err != nil {
 if isUniqueViolation(err) {
 return false, nil
@@ -387,12 +449,12 @@ return false, err
 return true, nil
 }
 
-// InsertExecutionIfAbsent inserts an execution as pending.
 // Deprecated: prefer InsertRunningExecution.
 func (s *Store) InsertExecutionIfAbsent(ctx context.Context, executionID, jobID string, scheduledAt time.Time) (bool, error) {
+t := scheduledAt.UTC()
 _, err := s.db.ExecContext(ctx, `
-INSERT INTO executions(id, job_id, scheduled_at, status) VALUES(?, ?, ?, 'pending')
-`, executionID, jobID, scheduledAt.UTC())
+INSERT INTO executions(id, job_id, scheduled_at, status, trigger_type, triggered_at) VALUES(?, ?, ?, 'pending', 'cron', CURRENT_TIMESTAMP)
+`, executionID, jobID, t)
 if err != nil {
 if isUniqueViolation(err) {
 return false, nil
@@ -484,7 +546,9 @@ if len(conditions) > 0 {
 where = "WHERE " + strings.Join(conditions, " AND ")
 }
 args = append(args, opts.Limit, opts.Offset)
-q := fmt.Sprintf(`SELECT id, job_id, scheduled_at, started_at, finished_at, status, error FROM executions %s ORDER BY scheduled_at DESC LIMIT ? OFFSET ?`, where)
+q := fmt.Sprintf(`SELECT id, job_id, scheduled_at, started_at, finished_at, status, error,
+trigger_type, triggered_at, triggered_by
+FROM executions %s ORDER BY triggered_at DESC LIMIT ? OFFSET ?`, where)
 
 rows, err := s.db.QueryContext(ctx, q, args...)
 if err != nil {
@@ -494,22 +558,10 @@ defer rows.Close()
 
 out := make([]model.Execution, 0)
 for rows.Next() {
-var e model.Execution
-var startedAt, finishedAt sql.NullTime
-var errText sql.NullString
-if err := rows.Scan(&e.ID, &e.JobID, &e.ScheduledAt, &startedAt, &finishedAt, &e.Status, &errText); err != nil {
+e, err := scanExecution(rows)
+if err != nil {
 return nil, err
 }
-if startedAt.Valid {
-e.StartedAt = startedAt.Time.UTC()
-}
-if finishedAt.Valid {
-e.FinishedAt = finishedAt.Time.UTC()
-}
-if errText.Valid {
-e.Error = errText.String
-}
-e.ScheduledAt = e.ScheduledAt.UTC()
 out = append(out, e)
 }
 if err := rows.Err(); err != nil {
@@ -526,6 +578,81 @@ out[i].Steps = steps
 }
 return out, nil
 }
+
+// GetExecution fetches a single execution by ID, including its steps.
+func (s *Store) GetExecution(ctx context.Context, id string) (*model.Execution, error) {
+row := s.db.QueryRowContext(ctx, `
+SELECT id, job_id, scheduled_at, started_at, finished_at, status, error,
+trigger_type, triggered_at, triggered_by
+FROM executions WHERE id=?
+`, id)
+e, err := scanExecution(row)
+if err != nil {
+if errors.Is(err, sql.ErrNoRows) {
+return nil, ErrNotFound
+}
+return nil, err
+}
+steps, err := s.getExecutionSteps(ctx, e.ID)
+if err != nil {
+return nil, err
+}
+e.Steps = steps
+return &e, nil
+}
+
+// FindExecutionByIdempotencyKey finds an existing execution with the given idempotency key.
+// Returns ErrNotFound if not found.
+func (s *Store) FindExecutionByIdempotencyKey(ctx context.Context, jobID, key string) (*model.Execution, error) {
+row := s.db.QueryRowContext(ctx, `
+SELECT id, job_id, scheduled_at, started_at, finished_at, status, error,
+trigger_type, triggered_at, triggered_by
+FROM executions WHERE job_id=? AND idempotency_key=?
+`, jobID, key)
+e, err := scanExecution(row)
+if err != nil {
+if errors.Is(err, sql.ErrNoRows) {
+return nil, ErrNotFound
+}
+return nil, err
+}
+return &e, nil
+}
+
+func scanExecution(row interface{ Scan(dest ...any) error }) (model.Execution, error) {
+var e model.Execution
+var scheduledAt sql.NullTime
+var startedAt, finishedAt sql.NullTime
+var triggeredAt sql.NullTime
+var errText, triggeredBy sql.NullString
+var triggerType string
+if err := row.Scan(&e.ID, &e.JobID, &scheduledAt, &startedAt, &finishedAt, &e.Status, &errText,
+&triggerType, &triggeredAt, &triggeredBy); err != nil {
+return model.Execution{}, err
+}
+if scheduledAt.Valid {
+t := scheduledAt.Time.UTC()
+e.ScheduledAt = &t
+}
+if startedAt.Valid {
+e.StartedAt = startedAt.Time.UTC()
+}
+if finishedAt.Valid {
+e.FinishedAt = finishedAt.Time.UTC()
+}
+if triggeredAt.Valid {
+e.TriggeredAt = triggeredAt.Time.UTC()
+}
+if errText.Valid {
+e.Error = errText.String
+}
+if triggeredBy.Valid {
+e.TriggeredBy = triggeredBy.String
+}
+e.TriggerType = triggerType
+return e, nil
+}
+
 
 func (s *Store) getExecutionSteps(ctx context.Context, executionID string) ([]model.ExecutionStep, error) {
 rows, err := s.db.QueryContext(ctx, `

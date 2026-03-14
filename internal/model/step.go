@@ -31,7 +31,8 @@ JobID       string
 Job         *Job
 Timezone    string
 ScheduledAt time.Time
-Results     map[string]StepResult // step_id → result
+Results     map[string]StepResult          // step_id → result
+Overrides   map[string]map[string]any      // step_id → config overrides
 }
 
 type ExecutionStep struct {

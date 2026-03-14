@@ -299,6 +299,102 @@ curl "http://localhost:8080/executions?include_adhoc=true" \
 
 参数：`limit`（默认 50，最大 500）、`offset`、`job_id`、`include_adhoc`
 
+Execution 记录新增字段（v3）：
+
+| 字段 | 说明 |
+|------|------|
+| `trigger_type` | `cron` / `manual` / `adhoc` |
+| `triggered_at` | 实际启动时间（cron 调度延迟 = `triggered_at − scheduled_at`） |
+| `triggered_by` | `system`（cron）/ `api`（手动触发） |
+| `scheduled_at` | Cron 计划时间（手动触发为 `null`） |
+
+### POST /jobs/{id}/trigger（手动触发）
+
+手动立即执行一个已有 Job，**不影响 Cron 调度**（`next_run_at` 保持不变）。
+
+```bash
+# 基本用法
+curl -X POST http://localhost:8080/jobs/<job-id>/trigger \
+  -H "Authorization: Bearer xxx"
+
+# 同步等待执行完成（默认超时 30s）
+curl -X POST "http://localhost:8080/jobs/<job-id>/trigger?wait=true&timeout=60" \
+  -H "Authorization: Bearer xxx"
+
+# 携带幂等键（防止重复触发）
+curl -X POST http://localhost:8080/jobs/<job-id>/trigger \
+  -H "Authorization: Bearer xxx" \
+  -H "Idempotency-Key: my-unique-key-001"
+
+# 覆盖 Step 配置参数（调试用）
+curl -X POST http://localhost:8080/jobs/<job-id>/trigger \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "override": {
+      "backup_step": { "script": "/tmp/test.sh" }
+    }
+  }'
+```
+
+**响应（异步，默认）：** HTTP 201
+```json
+{ "execution_id": "xxxxx", "status": "running", "trigger": "manual" }
+```
+
+**响应（`?wait=true`，执行完成）：** HTTP 200
+```json
+{ "execution_id": "xxxxx", "status": "success", "trigger": "manual" }
+```
+
+**响应（`?wait=true`，超时仍在运行）：** HTTP 202
+```json
+{ "execution_id": "xxxxx", "status": "running", "trigger": "manual" }
+```
+
+**响应（Job 正在运行，拒绝并发）：** HTTP 409
+```json
+{ "error": "job already running" }
+```
+
+| 参数 / Header | 说明 |
+|---|---|
+| `?wait=true` | 阻塞直到执行完成，最多等待 `timeout` 秒 |
+| `?timeout=N` | 与 `wait=true` 配合，等待秒数（默认 30） |
+| `Idempotency-Key` | 幂等键，相同 key 重复请求返回已有 execution |
+| `override.{step_id}` | 覆盖指定 Step 的 config 字段（仅 config 合并，不可修改 type/order_index/step_id） |
+
+### GET /executions/{id}（查看单次执行详情）
+
+```bash
+curl http://localhost:8080/executions/<execution-id> \
+  -H "Authorization: Bearer xxx"
+```
+
+响应包含完整执行信息及每个 Step 的 stdout/stderr：
+
+```json
+{
+  "id": "exec-uuid",
+  "job_id": "job-uuid",
+  "trigger_type": "manual",
+  "triggered_by": "api",
+  "triggered_at": "2026-03-14T04:00:00Z",
+  "scheduled_at": null,
+  "status": "success",
+  "steps": [
+    {
+      "step_id": "backup",
+      "status": "success",
+      "stdout": "...",
+      "stderr": "",
+      "started_at": "...",
+      "finished_at": "..."
+    }
+  ]
+}
+```
+
 ### POST /send（即时执行）
 
 无需创建 Job，直接提交 Steps 执行。AI Agent / CI 调用入口。

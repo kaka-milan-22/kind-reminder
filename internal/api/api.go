@@ -1,6 +1,7 @@
 package api
 
 import (
+"context"
 "encoding/json"
 "errors"
 "net/http"
@@ -23,6 +24,7 @@ store     *store.Store
 apiToken  string
 notifiers notifier.Registry
 stats     StatsConfig
+runner    JobRunner
 }
 
 type SchedulerStatusProvider interface {
@@ -33,6 +35,12 @@ QueueType() string
 RateLimitPerSec() int
 }
 
+// JobRunner executes a job's steps for a given execution ID.
+// The execution must already be inserted in the DB before calling Run.
+type JobRunner interface {
+RunExecution(ctx context.Context, job *model.Job, execID string, scheduledAt *time.Time, overrides map[string]map[string]any)
+}
+
 type StatsConfig struct {
 TelegramToken string
 SMTPHost      string
@@ -41,8 +49,8 @@ Webhook       config.WebhookConfig
 Scheduler     SchedulerStatusProvider
 }
 
-func New(st *store.Store, apiToken string, stats StatsConfig, notifiers notifier.Registry) *Server {
-return &Server{store: st, apiToken: apiToken, stats: stats, notifiers: notifiers}
+func New(st *store.Store, apiToken string, stats StatsConfig, notifiers notifier.Registry, runner JobRunner) *Server {
+return &Server{store: st, apiToken: apiToken, stats: stats, notifiers: notifiers, runner: runner}
 }
 
 func (s *Server) Router() http.Handler {
@@ -60,6 +68,8 @@ r.Get("/jobs/{id}", s.getJob)
 r.Patch("/jobs/{id}", s.patchJob)
 r.Delete("/jobs/{id}", s.deleteJob)
 r.Get("/executions", s.listExecutions)
+r.Get("/executions/{id}", s.getExecutionHandler)
+r.Post("/jobs/{id}/trigger", s.triggerJob)
 r.Post("/providers", s.createProvider)
 r.Get("/providers", s.listProviders)
 r.Delete("/providers/{id}", s.deleteProvider)

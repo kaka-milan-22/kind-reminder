@@ -2,6 +2,7 @@ package scheduler
 
 import (
 "context"
+"encoding/json"
 "log/slog"
 "sync/atomic"
 "time"
@@ -28,7 +29,8 @@ RateLimitPerSec int
 type task struct {
 Job         model.Job
 ExecutionID string
-ScheduledAt time.Time
+ScheduledAt *time.Time
+Overrides   map[string]map[string]any
 }
 
 type Scheduler struct {
@@ -152,7 +154,7 @@ return
 
 	// InsertRunningExecution handles both dedup (UNIQUE job_id+scheduled_at)
 // and concurrent-run prevention (partial unique index on status=running).
-created, err := s.store.InsertRunningExecution(ctx, execID, job.ID, scheduledAt)
+created, err := s.store.InsertRunningExecution(ctx, execID, job.ID, &scheduledAt, model.TriggerTypeCron, "system", "")
 if err != nil {
 s.logger.Error("insert running execution failed", "job_id", job.ID, "error", err)
 return
@@ -172,7 +174,7 @@ s.logger.Error("advance job schedule failed", "job_id", job.ID, "error", err)
 return
 }
 
-if err := s.dispatchQ.Push(ctx, task{Job: job, ExecutionID: execID, ScheduledAt: scheduledAt}); err != nil {
+if err := s.dispatchQ.Push(ctx, task{Job: job, ExecutionID: execID, ScheduledAt: &scheduledAt}); err != nil {
 s.logger.Error("enqueue job failed", "job_id", job.ID, "error", err)
 } else {
 s.logger.Info("job triggered", "job_id", job.ID, "scheduled_at", scheduledAt)
@@ -194,24 +196,33 @@ return backoffDurations[idx]
 }
 
 func (s *Scheduler) handleTask(ctx context.Context, t task) {
-log := s.logger.With("job_id", t.Job.ID, "execution_id", t.ExecutionID)
+var scheduledAt time.Time
+if t.ScheduledAt != nil {
+scheduledAt = *t.ScheduledAt
+}
+s.runJob(ctx, &t.Job, t.ExecutionID, scheduledAt, t.Overrides)
+}
+
+func (s *Scheduler) runJob(ctx context.Context, jobSnapshot *model.Job, execID string, scheduledAt time.Time, overrides map[string]map[string]any) {
+log := s.logger.With("job_id", jobSnapshot.ID, "execution_id", execID)
 log.Info("execution started")
 
-// Load job steps from DB (authoritative, not from task struct)
-job, err := s.store.GetJob(ctx, t.Job.ID)
+// Load job steps from DB (authoritative, not from snapshot)
+job, err := s.store.GetJob(ctx, jobSnapshot.ID)
 if err != nil {
 log.Error("load job failed", "error", err)
-_ = s.store.MarkExecutionFinished(ctx, t.ExecutionID, model.ExecutionFailed, time.Now().UTC(), "load job: "+err.Error())
+_ = s.store.MarkExecutionFinished(ctx, execID, model.ExecutionFailed, time.Now().UTC(), "load job: "+err.Error())
 return
 }
 
 runCtx := &model.RunContext{
-ExecutionID: t.ExecutionID,
-JobID:       t.Job.ID,
+ExecutionID: execID,
+JobID:       jobSnapshot.ID,
 Job:         job,
 Timezone:    job.Timezone,
-ScheduledAt: t.ScheduledAt,
+ScheduledAt: scheduledAt,
 Results:     make(map[string]model.StepResult),
+Overrides:   overrides,
 }
 
 execFailed := false
@@ -223,13 +234,20 @@ if !ok {
 log.Error("unknown step type", "step_id", step.StepID, "type", step.Type)
 res := model.StepResult{Status: "failed", Error: "unknown step type: " + step.Type}
 runCtx.Results[step.StepID] = res
-s.saveExecutionStep(ctx, t.ExecutionID, step, res, time.Now().UTC(), time.Now().UTC())
+s.saveExecutionStep(ctx, execID, step, res, time.Now().UTC(), time.Now().UTC())
 if !step.ContinueOnError {
 execFailed = true
 execErr = res.Error
 break
 }
 continue
+}
+
+// Apply config overrides for this step (merge non-null config fields only)
+if overrides != nil {
+if ov, ok := overrides[step.StepID]; ok {
+step = applyStepOverride(step, ov)
+}
 }
 
 maxAttempts := step.Retry
@@ -244,7 +262,7 @@ stepStart = time.Now().UTC()
 
 timeout := time.Duration(step.Timeout) * time.Second
 if timeout <= 0 {
-timeout = 5 * time.Minute // default max
+timeout = 5 * time.Minute
 }
 stepCtx, cancel := context.WithTimeout(ctx, timeout)
 res = exec.Execute(stepCtx, runCtx, step)
@@ -261,7 +279,7 @@ time.Sleep(backoff(attempt))
 }
 
 stepEnd := time.Now().UTC()
-s.saveExecutionStep(ctx, t.ExecutionID, step, res, stepStart, stepEnd)
+s.saveExecutionStep(ctx, execID, step, res, stepStart, stepEnd)
 runCtx.Results[step.StepID] = res
 
 if res.Status == "failed" && !step.ContinueOnError {
@@ -274,12 +292,52 @@ break
 finished := time.Now().UTC()
 if execFailed {
 log.Error("execution failed", "error", execErr)
-_ = s.store.MarkExecutionFinished(ctx, t.ExecutionID, model.ExecutionFailed, finished, execErr)
+_ = s.store.MarkExecutionFinished(ctx, execID, model.ExecutionFailed, finished, execErr)
 } else {
 log.Info("execution success")
-_ = s.store.MarkExecutionFinished(ctx, t.ExecutionID, model.ExecutionSuccess, finished, "")
+_ = s.store.MarkExecutionFinished(ctx, execID, model.ExecutionSuccess, finished, "")
 }
 }
+
+// applyStepOverride merges override map into step's Config JSON.
+// Blocked fields (type, order_index, step_id) are ignored.
+// Null values are ignored.
+func applyStepOverride(step model.Step, overrides map[string]any) model.Step {
+if len(overrides) == 0 {
+return step
+}
+blocked := map[string]bool{"type": true, "order_index": true, "step_id": true}
+base := make(map[string]any)
+if len(step.Config) > 0 {
+_ = json.Unmarshal(step.Config, &base)
+}
+for k, v := range overrides {
+if blocked[k] {
+continue
+}
+if v == nil {
+continue // skip null values
+}
+base[k] = v
+}
+merged, err := json.Marshal(base)
+if err == nil {
+step.Config = merged
+}
+return step
+}
+
+// RunExecution runs a job's steps and marks the execution finished.
+// The execution must already be inserted (status=running) before calling this.
+// This method is safe to call from a goroutine.
+func (s *Scheduler) RunExecution(ctx context.Context, job *model.Job, execID string, scheduledAt *time.Time, overrides map[string]map[string]any) {
+var schedTime time.Time
+if scheduledAt != nil {
+schedTime = *scheduledAt
+}
+s.runJob(ctx, job, execID, schedTime, overrides)
+}
+
 
 func (s *Scheduler) saveExecutionStep(ctx context.Context, execID string, step model.Step, res model.StepResult, started, finished time.Time) {
 es := model.ExecutionStep{

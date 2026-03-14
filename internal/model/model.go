@@ -50,13 +50,24 @@ ExecutionSuccess ExecutionStatus = "success"
 ExecutionFailed  ExecutionStatus = "failed"
 )
 
+type TriggerType = string
+
+const (
+TriggerTypeCron   TriggerType = "cron"
+TriggerTypeManual TriggerType = "manual"
+TriggerTypeAdhoc  TriggerType = "adhoc"
+)
+
 type Execution struct {
 ID          string          `json:"id"`
 JobID       string          `json:"job_id"`
-ScheduledAt time.Time       `json:"scheduled_at"`
+ScheduledAt *time.Time      `json:"scheduled_at"`
+TriggeredAt time.Time       `json:"triggered_at"`
 StartedAt   time.Time       `json:"started_at,omitempty"`
 FinishedAt  time.Time       `json:"finished_at,omitempty"`
 Status      ExecutionStatus `json:"status"`
+TriggerType TriggerType     `json:"trigger_type"`
+TriggeredBy string          `json:"triggered_by,omitempty"`
 Error       string          `json:"error,omitempty"`
 Steps       []ExecutionStep `json:"steps,omitempty"`
 }

@@ -35,3 +35,8 @@ reminder.db
 reminder
 data.tar.gz
 *.tar.gz
+
+# kind-reminder runtime files
+kind-reminder
+kind-reminder.pid
+kind-reminder.log

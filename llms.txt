@@ -71,14 +71,17 @@ DATA TYPES
   }
 
   Execution {
-    id           string
-    job_id       string  "__adhoc__" for POST /send executions
-    scheduled_at time
-    started_at   time    (omitempty)
-    finished_at  time    (omitempty)
-    status       string  "running" | "success" | "failed"
-    error        string  (omitempty)
-    steps        []ExecutionStep
+    id             string
+    job_id         string     "__adhoc__" for POST /send executions
+    scheduled_at   time|null  cron-calculated time; null for manual/adhoc triggers
+    triggered_at   time       when execution actually started
+    started_at     time       (omitempty)
+    finished_at    time       (omitempty)
+    status         string     "running" | "success" | "failed"
+    trigger_type   string     "cron" | "manual" | "adhoc"
+    triggered_by   string     (omitempty) "system" for cron, "api" for manual trigger
+    error          string     (omitempty)
+    steps          []ExecutionStep
   }
 
   ExecutionStep {
@@ -187,7 +190,22 @@ API ENDPOINTS
 
   GET  /executions      params: limit(default 50, max 500), offset(default 0),
                                 job_id(filter), include_adhoc(bool, default false)
+                        sorted by triggered_at DESC
                         → []Execution (each includes steps[])
+
+  GET  /executions/:id  → Execution (with steps[])
+                        use after POST /jobs/:id/trigger to inspect stdout/stderr
+
+  POST /jobs/:id/trigger  optional headers: Idempotency-Key
+                          optional query: wait=true, timeout=N (seconds, default 30)
+                          optional body (max 64KB): {override: {step_id: {config_key: val}}}
+                          → 201 {execution_id, status: "running", trigger: "manual"}
+                          → 200 {execution_id, status: "success"|"failed", trigger: "manual"} (wait=true, finished)
+                          → 202 {execution_id, status: "running", trigger: "manual"} (wait=true, timed out)
+                          → 409 {error: "job already running"} (concurrent run prevented)
+                          → 200 {execution_id, ...} (Idempotency-Key reuse — returns existing execution)
+                          Does NOT modify next_run_at; cron schedule unaffected.
+                          override: merges into step config JSON only; blocked fields: type, order_index, step_id; null values ignored
 
   POST /send            body: {timezone?, steps: [{step_id, order_index, type, config, timeout?, retry?, continue_on_error?}]}
                         timezone: IANA string; affects .now and time rendering in all templates for this execution
@@ -221,8 +239,10 @@ DATABASE TABLES
   jobs              (id, cron_expr, timezone, title, enabled, next_run_at, last_run_at, created_at, updated_at)
   job_steps         (id, job_id FK, step_id, order_index, type, config_json, timeout, retry, continue_on_error)
                     UNIQUE(job_id, step_id), UNIQUE(job_id, order_index)
-  executions        (id, job_id, scheduled_at, started_at, finished_at, status, error)
-                    UNIQUE(job_id, scheduled_at)
+  executions        (id, job_id, scheduled_at, started_at, finished_at, status, error,
+                     trigger_type, triggered_at, triggered_by, idempotency_key)
+                    scheduled_at nullable (NULL for manual/adhoc)
+                    UNIQUE(job_id, idempotency_key) WHERE idempotency_key IS NOT NULL
   execution_steps   (id, execution_id FK, step_id, type, status, started_at, finished_at, exit_code, stdout, stderr, error)
   channels          (id, type, provider_id, config, created_at)
   providers         (id, type, config, created_at)
@@ -284,3 +304,18 @@ PLANNED / NOT YET IMPLEMENTED
   - per-step retry policy with configurable backoff intervals
   - GET /executions cursor-based pagination
   - per-channel result in notification step (currently last-error-wins)
+
+TRIGGER TYPES (v3)
+  cron    scheduled via cron expression, triggered by scheduler
+  manual  triggered via POST /jobs/:id/trigger; scheduled_at=null; does not touch next_run_at
+  adhoc   triggered via POST /send; not tied to a job; job_id="__adhoc__"
+
+  Execution audit fields:
+    trigger_type  cron | manual | adhoc
+    triggered_at  when execution actually started (scheduling latency = triggered_at - scheduled_at for cron)
+    triggered_by  "system" for cron; "api" for manual trigger
+
+  Idempotency:
+    Header: Idempotency-Key
+    Scoped: UNIQUE(job_id, idempotency_key) — same key across different jobs does not conflict
+    Behavior: duplicate key returns existing execution (idempotent)

@@ -63,7 +63,7 @@ return
 execID := uuid.NewString()
 
 // Create adhoc execution
-ok, err := s.store.InsertRunningExecution(r.Context(), execID, "__adhoc__", time.Now().UTC())
+ok, err := s.store.InsertRunningExecution(r.Context(), execID, "__adhoc__", nil, model.TriggerTypeAdhoc, "", "")
 if err != nil || !ok {
 writeErr(w, http.StatusInternalServerError, errors.New("failed to create execution"))
 return

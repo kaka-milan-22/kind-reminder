@@ -456,6 +456,48 @@ curl -X POST http://localhost:8080/send \
 curl http://localhost:8080/stats -H "Authorization: Bearer xxx"
 ```
 
+### SMTP Diagnostics
+
+当邮件不通时，可直接调用 SMTP 诊断接口，查看 DNS 解析、TCP、greeting、EHLO、STARTTLS、AUTH、`MAIL FROM`、`RCPT TO` 各阶段。
+
+```bash
+# 使用全局 fallback SMTP 配置诊断
+curl -X POST http://localhost:8080/diagnostics/smtp \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# 按 provider 诊断，并指定收件人
+curl -X POST http://localhost:8080/diagnostics/smtp \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"provider_id":"smtp_ops","to":"ops@company.com"}'
+
+# 按 channel 诊断，自动复用 channel/provider 绑定关系
+curl -X POST http://localhost:8080/diagnostics/smtp \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"channel_id":"mail_ops"}'
+```
+
+示例响应（截断）：
+
+```json
+{
+  "source": "fallback",
+  "diagnostic": {
+    "host": "smtp.gmail.com",
+    "resolved_addresses": ["198.18.0.23"],
+    "suspected_fake_ip": true,
+    "failed_stage": "smtp_greeting",
+    "error": "EOF (...)",
+    "hint": "resolved to 198.18.0.23 in 198.18.0.0/15 ..."
+  }
+}
+```
+
+如果你看到 `198.18.0.0/15` 之类地址，通常不是 SMTP 服务真实公网 IP，而是代理/VPN 工具的 Fake-IP 模式在拦截 DNS；这种情况下，应用代码即使没有主动走代理，邮件仍可能因为宿主机网络环境而失败。
+
 ---
 
 ## 配置
@@ -495,6 +537,16 @@ webhook:
 ```
 
 环境变量覆盖（优先级高于 yaml）：`API_TOKEN`、`DB_PATH`、`SERVER_PORT`、`TELEGRAM_BOT_TOKEN`、`SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASS`、`SMTP_FROM`
+
+### 邮件排障提示
+
+- `smtp greeting ... EOF`：通常表示 TCP 建连后、SMTP banner 前就被断开，更像网络路径、Fake-IP、透明代理、出站端口策略问题，而不是密码错误。
+- `smtp AUTH ...`：通常表示账号、应用专用密码或认证方式不匹配。
+- `smtp MAIL FROM ...` / `smtp RCPT TO ...`：通常是发件人、收件人或服务商策略限制。
+- 如果系统启用了 Shadowrocket、VPN、透明代理或 Fake-IP DNS，请优先检查：
+  - `smtp.gmail.com` 是否被解析到 `198.18.0.0/15`
+  - 587/465 出站端口是否被分流或拦截
+  - 是否需要把 SMTP 域名加入直连规则，而不是走代理/Fake-IP
 
 > **Scheduler 调度策略（No-Catchup 模式）**
 >

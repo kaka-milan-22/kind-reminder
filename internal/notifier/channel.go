@@ -66,26 +66,11 @@ func sendEmail(ctx context.Context, payload model.NotificationPayload, chCfg jso
 	}
 
 	if provider != nil {
-		var p struct {
-			Host string `json:"host"`
-			Port int    `json:"port"`
-			User string `json:"user"`
-			Pass string `json:"pass"`
-			From string `json:"from"`
+		cfg, err := EmailConfigFromProvider(*provider)
+		if err != nil {
+			return err
 		}
-		if err := json.Unmarshal(provider.Config, &p); err != nil {
-			return fmt.Errorf("email provider config: %w", err)
-		}
-		if p.Port == 0 {
-			p.Port = 587
-		}
-		return NewEmailNotifier(EmailConfig{
-			Host: p.Host,
-			Port: p.Port,
-			User: p.User,
-			Pass: p.Pass,
-			From: p.From,
-		}).Send(ctx, payload, c.To)
+		return NewEmailNotifier(cfg).Send(ctx, payload, c.To)
 	}
 
 	n, ok := fallback["email"]

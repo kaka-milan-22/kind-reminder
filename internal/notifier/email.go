@@ -29,9 +29,9 @@ func NewEmailNotifier(cfg EmailConfig) *EmailNotifier {
 }
 
 func (n *EmailNotifier) Send(ctx context.Context, payload model.NotificationPayload, target string) error {
-	_ = ctx
 	addr := fmt.Sprintf("%s:%d", n.cfg.Host, n.cfg.Port)
 	auth := smtp.PlainAuth("", n.cfg.User, n.cfg.Pass, n.cfg.Host)
+	resolution := inspectSMTPResolution(ctx, n.cfg.Host)
 
 	msg := strings.Builder{}
 	msg.WriteString(fmt.Sprintf("From: %s\r\n", n.cfg.From))
@@ -42,14 +42,15 @@ func (n *EmailNotifier) Send(ctx context.Context, payload model.NotificationPayl
 	msg.WriteString("\r\n")
 	msg.WriteString(FormatNotification(payload))
 
-	conn, err := net.Dial("tcp", addr)
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("smtp connect %s: %w", addr, err)
+		return fmt.Errorf("smtp connect %s: %w", addr, annotateSMTPError(err, resolution))
 	}
 	client, err := smtp.NewClient(conn, n.cfg.Host)
 	if err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("smtp greeting %s: %w", addr, err)
+		return fmt.Errorf("smtp greeting %s: %w", addr, annotateSMTPError(err, resolution))
 	}
 	defer func() {
 		_ = client.Close()

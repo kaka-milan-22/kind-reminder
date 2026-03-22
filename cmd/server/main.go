@@ -65,6 +65,9 @@ func main() {
 		TelegramToken: cfg.TelegramBotToken,
 		SMTPHost:      cfg.SMTPHost,
 		SMTPPort:      cfg.SMTPPort,
+		SMTPUser:      cfg.SMTPUser,
+		SMTPPass:      cfg.SMTPPass,
+		SMTPFrom:      cfg.SMTPFrom,
 		Webhook:       cfg.Webhook,
 		Scheduler:     s,
 	}, notifiers, s)

@@ -364,6 +364,149 @@ curl -X POST http://localhost:8080/jobs/<job-id>/trigger \
 | `Idempotency-Key` | 幂等键，相同 key 重复请求返回已有 execution |
 | `override.{step_id}` | 覆盖指定 Step 的 config 字段（仅 config 合并，不可修改 type/order_index/step_id） |
 
+#### 完整示例：按 Job ID 按需触发执行
+
+以下演示从零开始的完整工作流：创建 Job → 获取 ID → 手动触发 → 查看结果。
+
+**第一步：创建 Job（备份 + Telegram 通知）**
+
+```bash
+JOB_ID=$(curl -s -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cron": "0 2 * * *",
+    "timezone": "Asia/Shanghai",
+    "title": "每日备份",
+    "enabled": true,
+    "steps": [
+      {
+        "step_id": "backup",
+        "order_index": 1,
+        "type": "shell",
+        "timeout": 120,
+        "retry": 2,
+        "config": { "script": "/app/scripts/backup.sh" }
+      },
+      {
+        "step_id": "notify",
+        "order_index": 2,
+        "type": "notification",
+        "continue_on_error": true,
+        "config": {
+          "channels": ["tg_ops"],
+          "title_template": "备份报告 {{ .now.Format \"01-02 15:04\" }}",
+          "message_template": "状态：{{ (index .steps \"backup\").Status }}\nexit={{ (index .steps \"backup\").ExitCode }}\n{{ (index .steps \"backup\").Stdout }}"
+        }
+      }
+    ]
+  }' | jq -r '.id')
+
+echo "Job ID: $JOB_ID"
+```
+
+**第二步：查询已有 Job 列表（获取 Job ID）**
+
+```bash
+# 列出所有 Job（不含 steps）
+curl -s http://localhost:8080/jobs \
+  -H "Authorization: Bearer xxx" | jq '[.[] | {id, title, enabled, next_run_at}]'
+
+# 获取单个 Job 详情（含 steps）
+curl -s "http://localhost:8080/jobs/$JOB_ID" \
+  -H "Authorization: Bearer xxx" | jq '{id, title, steps: [.steps[] | {step_id, type}]}'
+```
+
+**第三步：立即触发执行（异步，默认）**
+
+```bash
+EXEC_ID=$(curl -s -X POST "http://localhost:8080/jobs/$JOB_ID/trigger" \
+  -H "Authorization: Bearer xxx" | jq -r '.execution_id')
+
+echo "Execution ID: $EXEC_ID"
+# → HTTP 201: {"execution_id":"abc-123","status":"running","trigger":"manual"}
+```
+
+**第四步：同步触发，等待完成**
+
+```bash
+# ?wait=true 阻塞直到完成（最多等 60 秒）
+curl -s -X POST "http://localhost:8080/jobs/$JOB_ID/trigger?wait=true&timeout=60" \
+  -H "Authorization: Bearer xxx"
+# → HTTP 200: {"execution_id":"abc-123","status":"success","trigger":"manual"}
+# → HTTP 202: {"execution_id":"abc-123","status":"running","trigger":"manual"}  (超时仍在运行)
+# → HTTP 409: {"error":"job already running"}  (已有一次在运行)
+```
+
+**第五步：携带幂等键（防止重复触发）**
+
+```bash
+# 同一个 Idempotency-Key 重复调用，返回同一个 execution（不会重跑）
+curl -s -X POST "http://localhost:8080/jobs/$JOB_ID/trigger" \
+  -H "Authorization: Bearer xxx" \
+  -H "Idempotency-Key: deploy-20260407-001"
+```
+
+**第六步：覆盖 Step 配置（临时调试）**
+
+```bash
+# 用测试脚本替代正式脚本，不修改 Job 定义
+curl -s -X POST "http://localhost:8080/jobs/$JOB_ID/trigger?wait=true" \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "override": {
+      "backup": { "script": "/tmp/dry_run_backup.sh" }
+    }
+  }'
+```
+
+**第七步：查询执行详情（stdout / stderr）**
+
+```bash
+# 查看单次执行的每步结果
+curl -s "http://localhost:8080/executions/$EXEC_ID" \
+  -H "Authorization: Bearer xxx" | jq '{
+    status,
+    trigger_type,
+    triggered_at,
+    steps: [.steps[] | {step_id, status, exit_code, stdout, stderr}]
+  }'
+```
+
+示例响应：
+
+```json
+{
+  "status": "success",
+  "trigger_type": "manual",
+  "triggered_at": "2026-04-07T10:30:00Z",
+  "steps": [
+    {
+      "step_id": "backup",
+      "status": "success",
+      "exit_code": 0,
+      "stdout": "Backup completed: /data/backup-20260407.tar.gz\n",
+      "stderr": ""
+    },
+    {
+      "step_id": "notify",
+      "status": "success",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}
+```
+
+**第八步：查询该 Job 的所有手动触发历史**
+
+```bash
+curl -s "http://localhost:8080/executions?job_id=$JOB_ID&limit=10" \
+  -H "Authorization: Bearer xxx" | jq '[.[] | {id, status, trigger_type, triggered_at}]'
+```
+
 ### GET /executions/{id}（查看单次执行详情）
 
 ```bash

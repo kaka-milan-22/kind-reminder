@@ -266,6 +266,42 @@ TYPICAL USAGE PATTERNS
     Step 1: main task (continue_on_error=false)
     Step 2: cleanup/notify (continue_on_error=true, always runs even if step 1 fails)
 
+  Pattern 5: Trigger job by ID (manual on-demand)
+    Full workflow to run an existing job immediately without waiting for its cron schedule:
+
+    1. Create job → capture returned ID:
+         POST /jobs  body: {cron, timezone, title, enabled, steps[]}
+         Response: {"id": "<job-id>"}
+
+    2. (Optional) List jobs to find an existing ID:
+         GET /jobs → []Job  (steps field omitted; inspect .id and .title)
+         GET /jobs/:id → Job with steps (use to confirm step_id values before override)
+
+    3. Trigger async (fire-and-forget):
+         POST /jobs/:id/trigger
+         → 201 {"execution_id": "...", "status": "running", "trigger": "manual"}
+         → 409 {"error": "job already running"}  (concurrent run rejected)
+
+    4. Trigger synchronous (wait for completion):
+         POST /jobs/:id/trigger?wait=true&timeout=60
+         → 200 {"execution_id": "...", "status": "success"|"failed", "trigger": "manual"}
+         → 202 {"execution_id": "...", "status": "running", ...}  (timed out, still running)
+
+    5. Idempotent trigger (safe to retry; same key returns same execution):
+         POST /jobs/:id/trigger  header: Idempotency-Key: <unique-key>
+
+    6. Debug with config override (temporary script swap, no job modification):
+         POST /jobs/:id/trigger  body: {"override": {"<step_id>": {"script": "/tmp/test.sh"}}}
+         override merges into step config JSON only; blocked fields: type, order_index, step_id
+
+    7. Inspect execution result (stdout/stderr per step):
+         GET /executions/:execution_id
+         → Execution with steps[]: {step_id, status, exit_code, stdout, stderr}
+
+    8. List execution history for a job:
+         GET /executions?job_id=<id>&limit=10
+         → []Execution sorted by triggered_at DESC
+
 CONFIG FILE (config.yaml)
   server_port:  string  (default "8080")
   db_path:      string  (default "./reminder.db")

@@ -24,10 +24,22 @@ type triggerResponse struct {
 	ExecutionID string `json:"execution_id"`
 	Status      string `json:"status"`
 	Trigger     string `json:"trigger"`
+	Title       string `json:"title"`
 }
 
 func (s *Server) triggerJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "id")
+
+	// Get job
+	job, err := s.store.GetJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, err)
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	// Check idempotency key
 	idempotencyKey := r.Header.Get("Idempotency-Key")
@@ -43,20 +55,10 @@ func (s *Server) triggerJob(w http.ResponseWriter, r *http.Request) {
 				ExecutionID: existing.ID,
 				Status:      string(existing.Status),
 				Trigger:     model.TriggerTypeManual,
+				Title:       job.Title,
 			})
 			return
 		}
-	}
-
-	// Get job
-	job, err := s.store.GetJob(r.Context(), jobID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, err)
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, err)
-		return
 	}
 
 	// Parse request body (max 64KB)
@@ -115,6 +117,7 @@ func (s *Server) triggerJob(w http.ResponseWriter, r *http.Request) {
 						ExecutionID: execID,
 						Status:      string(exec.Status),
 						Trigger:     model.TriggerTypeManual,
+						Title:       job.Title,
 					})
 					return
 				}
@@ -123,6 +126,7 @@ func (s *Server) triggerJob(w http.ResponseWriter, r *http.Request) {
 					ExecutionID: execID,
 					Status:      string(model.ExecutionRunning),
 					Trigger:     model.TriggerTypeManual,
+					Title:       job.Title,
 				})
 				return
 			}
@@ -133,6 +137,7 @@ func (s *Server) triggerJob(w http.ResponseWriter, r *http.Request) {
 		ExecutionID: execID,
 		Status:      string(model.ExecutionRunning),
 		Trigger:     model.TriggerTypeManual,
+		Title:       job.Title,
 	})
 }
 

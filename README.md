@@ -151,10 +151,23 @@ Execution = 一次 Job 触发的完整运行记录
 
 | 变量 | 类型 | 说明 |
 |------|------|------|
+| `.job` | *Job | 当前 Job 对象（adhoc `/send` 时为 `nil`，模板需做 nil 判断） |
+| `.steps` | map[string]StepResult | 已完成 Steps 的结果，按 `step_id` 索引 |
+| `.now` | time.Time | 当前时间（受 Job/请求 timezone 影响） |
+
+**`.job` 字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
 | `.job.ID` | string | Job ID |
+| `.job.CronExpr` | string | Cron 表达式（5 字段） |
+| `.job.Timezone` | string | IANA 时区 |
 | `.job.Title` | string | Job 标题 |
-| `.steps` | map | 已完成 Steps 的结果 |
-| `.now` | time.Time | 当前时间 |
+| `.job.Enabled` | bool | 是否启用 |
+| `.job.NextRunAt` | time.Time | 下一次计划运行时间 |
+| `.job.LastRunAt` | time.Time | 上一次运行时间 |
+| `.job.CreatedAt` | time.Time | 创建时间 |
+| `.job.UpdatedAt` | time.Time | 最后更新时间 |
 
 **StepResult 字段：**
 
@@ -734,6 +747,8 @@ docker compose up -d --build
 | `continue_on_error` | true | 失败后是否继续执行后续 step |
 
 Retry backoff：2s → 5s → 10s（固定）
+
+**执行级状态语义**：当 `continue_on_error=true` 且某 step 失败时，该 step 的 `status=failed` 会记录到 `execution_step`，但 `execution.status` 仍然保持 `success`（除非后续某个 `continue_on_error=false` 的 step 失败）。换句话说：step 级失败不会自动冒泡到 execution 级失败。如果你的 notification step 需要根据 execution 整体结果判断成功/失败，应直接读取前置 step 的 `(index .steps "...").Status` 字段。
 
 ---
 

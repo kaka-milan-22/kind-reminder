@@ -17,7 +17,7 @@ EXECUTION SEMANTICS
   - Step timeout enforced via context cancel (default 300s if not set)
   - StepResult.Status determines success/failure (never infer from Error string)
   - If step fails AND continue_on_error=false → execution marked failed, remaining steps skipped
-  - If step fails AND continue_on_error=true → failure recorded, execution continues
+  - If step fails AND continue_on_error=true → step.status=failed recorded, execution continues, AND execution.status remains "success" if no later step trips a continue_on_error=false failure (i.e. step-level failure does NOT bubble up to execution-level failure when continue_on_error=true)
   - Template render failure → step status=failed, error written to execution_step.error
 
 CONCURRENCY
@@ -67,7 +67,7 @@ DATA TYPES
     config           object  type-specific config (see STEP CONFIGS)
     timeout          int     seconds; 0 = use default 300s
     retry            int     max attempts; 0 or 1 = no retry
-    continue_on_error bool   default false
+    continue_on_error bool   default true (when field omitted/null in request → true)
   }
 
   Execution {
@@ -212,6 +212,25 @@ API ENDPOINTS
                         → 200 {execution_id, status, steps: []ExecutionStep}
                         job_id internally set to "__adhoc__"
                         synchronous: waits for all steps to complete before responding
+
+  POST /diagnostics/smtp  body: {channel_id?, provider_id?, to?}     (channel_id and provider_id are mutually exclusive)
+                          Resolves SMTP config in this priority:
+                            1. channel_id given → use channel's bound provider; if channel has no provider_id, fall back to global config.yaml smtp.*
+                            2. provider_id given → use that provider's config
+                            3. neither given  → use global fallback (config.yaml smtp.*)
+                          `to` overrides recipient (required when no channel_id, since channels carry the address)
+                          Probes DNS resolve → TCP → SMTP greeting → EHLO → STARTTLS → AUTH → MAIL FROM → RCPT TO,
+                          stopping at the first failed stage and returning structured diagnostic.
+                          → 200 {
+                                  source: "channel_provider"|"provider"|"fallback",
+                                  channel_id?: string,
+                                  provider_id?: string,
+                                  diagnostic: {
+                                    host, port, resolved_addresses[], suspected_fake_ip,
+                                    failed_stage, error, hint, ...
+                                  }
+                                }
+                          suspected_fake_ip=true when DNS resolves into 198.18.0.0/15 (typical of Shadowrocket / Fake-IP proxies).
 
 ERROR RESPONSES
   All errors: {"error": "message string"}

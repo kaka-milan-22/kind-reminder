@@ -75,11 +75,16 @@ func main() {
 		Scheduler:     s,
 	}, notifiers, s)
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.ServerPort),
-		Handler:      apiServer.Router(),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
+		Handler: apiServer.Router(),
+		// WriteTimeout is intentionally 0: synchronous endpoints (/send,
+		// /jobs/{id}/trigger?wait=true) can legitimately run longer than any
+		// fixed write deadline. Fast routes are bounded by a per-route
+		// http.TimeoutHandler in the router; long handlers manage their own
+		// ctx deadlines (per-step timeout / wait timeout).
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {

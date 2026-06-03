@@ -140,7 +140,7 @@ func (s *Server) sendHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		es := saveStep(r.Context(), s.store, execID, step, res)
-		es.StartedAt = stepStart
+		es.StartedAt = &stepStart
 		stepRuns = append(stepRuns, es)
 		runCtx.Results[step.StepID] = res
 
@@ -168,8 +168,8 @@ func saveStep(ctx context.Context, st *store.Store, execID string, step model.St
 		StepID:      step.StepID,
 		Type:        step.Type,
 		Status:      res.Status,
-		StartedAt:   now,
-		FinishedAt:  now,
+		StartedAt:   &now,
+		FinishedAt:  &now,
 		ExitCode:    res.ExitCode,
 		Stdout:      res.Stdout,
 		Stderr:      res.Stderr,

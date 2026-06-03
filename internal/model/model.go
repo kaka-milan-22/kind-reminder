@@ -14,16 +14,16 @@ const (
 )
 
 type Job struct {
-	ID        string    `json:"id"`
-	CronExpr  string    `json:"cron"`
-	Timezone  string    `json:"timezone"`
-	Title     string    `json:"title"`
-	Enabled   bool      `json:"enabled"`
-	NextRunAt time.Time `json:"next_run_at"`
-	LastRunAt time.Time `json:"last_run_at,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Steps     []Step    `json:"steps,omitempty"`
+	ID        string     `json:"id"`
+	CronExpr  string     `json:"cron"`
+	Timezone  string     `json:"timezone"`
+	Title     string     `json:"title"`
+	Enabled   bool       `json:"enabled"`
+	NextRunAt time.Time  `json:"next_run_at"`
+	LastRunAt *time.Time `json:"last_run_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	Steps     []Step     `json:"steps,omitempty"`
 }
 
 type ChannelResource struct {
@@ -63,8 +63,8 @@ type Execution struct {
 	JobID       string          `json:"job_id"`
 	ScheduledAt *time.Time      `json:"scheduled_at"`
 	TriggeredAt time.Time       `json:"triggered_at"`
-	StartedAt   time.Time       `json:"started_at,omitempty"`
-	FinishedAt  time.Time       `json:"finished_at,omitempty"`
+	StartedAt   *time.Time      `json:"started_at,omitempty"`
+	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
 	Status      ExecutionStatus `json:"status"`
 	TriggerType TriggerType     `json:"trigger_type"`
 	TriggeredBy string          `json:"triggered_by,omitempty"`

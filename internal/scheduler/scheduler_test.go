@@ -125,8 +125,8 @@ func TestRunOnceCatchesMissedRunsAndFastForwards(t *testing.T) {
 	if !updated.NextRunAt.Equal(time.Date(2026, 2, 21, 11, 0, 0, 0, time.UTC)) {
 		t.Fatalf("next_run_at = %s, want 2026-02-21 11:00:00 +0000 UTC", updated.NextRunAt)
 	}
-	if !updated.LastRunAt.IsZero() {
-		t.Fatalf("last_run_at = %s, want zero (job was skipped)", updated.LastRunAt)
+	if updated.LastRunAt != nil {
+		t.Fatalf("last_run_at = %v, want nil (job was skipped)", updated.LastRunAt)
 	}
 }
 
@@ -223,8 +223,8 @@ func TestStartupRecoverySkipsOverdueJobs(t *testing.T) {
 	if !updated.NextRunAt.Equal(want) {
 		t.Fatalf("next_run_at = %s, want %s", updated.NextRunAt, want)
 	}
-	if !updated.LastRunAt.IsZero() {
-		t.Fatalf("last_run_at = %s, want zero (nothing executed)", updated.LastRunAt)
+	if updated.LastRunAt != nil {
+		t.Fatalf("last_run_at = %v, want nil (nothing executed)", updated.LastRunAt)
 	}
 }
 

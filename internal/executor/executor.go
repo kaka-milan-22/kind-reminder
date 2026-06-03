@@ -1,13 +1,13 @@
 package executor
 
 import (
-"context"
+	"context"
 
-"crontab-reminder/internal/model"
+	"crontab-reminder/internal/model"
 )
 
 // Executor executes a single step attempt. It does NOT implement retry.
 // Retry is handled by the Runner.
 type Executor interface {
-Execute(ctx context.Context, runCtx *model.RunContext, step model.Step) model.StepResult
+	Execute(ctx context.Context, runCtx *model.RunContext, step model.Step) model.StepResult
 }

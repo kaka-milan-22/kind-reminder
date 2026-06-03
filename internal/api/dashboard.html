@@ -62,12 +62,12 @@
   .exec summary::-webkit-details-marker { display: none; }
   .exec summary:hover { background: var(--panel); }
   .exec .body { padding: 4px 16px 14px; }
-  .toggle { position: relative; width: 38px; height: 20px; }
+  .toggle { display: inline-block; position: relative; width: 40px; height: 22px; vertical-align: middle; }
   .toggle input { display: none; }
   .toggle span { position: absolute; inset: 0; background: #3a3e46; border: 1px solid #565b64;
         border-radius: 999px; transition: .15s; }
   .toggle span::after { content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%;
-        background: #c9ccd1; top: 2px; left: 2px; transition: .15s; }
+        background: #c9ccd1; top: 3px; left: 3px; transition: .15s; }
   .toggle input:checked + span { background: var(--ok); border-color: var(--ok); }
   .toggle input:checked + span::after { transform: translateX(18px); background: #fff; }
   #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);

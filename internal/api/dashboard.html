@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>kind-reminder</title>
+<style>
+  :root {
+    --bg: #16181c; --panel: #1b1d22; --panel2: #1f2228; --border: #2a2d33;
+    --text: #e4e4e2; --muted: #8b8d92; --faint: #5f6168;
+    --accent: #6b9bd1; --ok: #6fae6f; --fail: #cf7d7d; --warn: #c9a86a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    max-width: 1400px; margin: 0 auto; padding: 0 20px 60px;
+  }
+  a { color: var(--accent); }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+       letter-spacing: .8px; margin: 28px 0 10px; }
+  header { display: flex; align-items: center; gap: 14px; padding: 18px 0 10px;
+           position: sticky; top: 0; background: var(--bg); z-index: 5; border-bottom: 1px solid var(--border); }
+  header .grow { flex: 1; }
+  .pill { font-size: 12px; color: var(--muted); }
+  input, textarea, select, button {
+    font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px;
+  }
+  input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  textarea { font-family: var(--mono); font-size: 12.5px; width: 100%; resize: vertical; }
+  button { cursor: pointer; background: var(--panel2); }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0e1116; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button.sm { padding: 4px 9px; font-size: 12.5px; border-radius: 6px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+          padding: 5px 12px; font-size: 12.5px; display: flex; gap: 7px; align-items: center; }
+  .chip b { font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.fail { background: var(--fail); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  tr:hover td { background: var(--panel); }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  .muted { color: var(--muted); } .faint { color: var(--faint); }
+  .tag { font-size: 11px; padding: 2px 7px; border-radius: 5px; font-family: var(--mono);
+         border: 1px solid var(--border); }
+  .s-success { color: var(--ok); } .s-failed { color: var(--fail); } .s-running { color: var(--warn); }
+  pre { background: #101216; border: 1px solid var(--border); border-radius: 7px; padding: 10px;
+        overflow: auto; font-size: 12px; margin: 6px 0 0; max-height: 320px; }
+  .exec { border-bottom: 1px solid var(--border); }
+  .exec summary { cursor: pointer; padding: 9px 10px; display: flex; gap: 14px; align-items: center; list-style: none; }
+  .exec summary::-webkit-details-marker { display: none; }
+  .exec summary:hover { background: var(--panel); }
+  .exec .body { padding: 4px 16px 14px; }
+  .toggle { position: relative; width: 38px; height: 20px; }
+  .toggle input { display: none; }
+  .toggle span { position: absolute; inset: 0; background: var(--faint); border-radius: 999px; transition: .15s; }
+  .toggle span::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+        background: #fff; top: 2px; left: 2px; transition: .15s; }
+  .toggle input:checked + span { background: var(--ok); }
+  .toggle input:checked + span::after { transform: translateX(18px); }
+  #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+           background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+           padding: 10px 16px; opacity: 0; transition: .2s; pointer-events: none; max-width: 80vw; }
+  #toast.show { opacity: 1; }
+  .empty { color: var(--faint); padding: 18px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📡 kind-reminder</h1>
+  <span class="pill" id="conn"></span>
+  <div class="grow"></div>
+  <input id="token" type="password" placeholder="API token (Bearer)" style="width: 280px">
+  <button class="sm" onclick="saveToken()">Save</button>
+  <button class="sm" onclick="loadAll()">↻ Refresh</button>
+</header>
+
+<h2>Status</h2>
+<div class="chips" id="stats"><span class="empty">Save your token, then refresh.</span></div>
+
+<h2>Jobs</h2>
+<div class="card" style="padding:0; overflow:hidden">
+  <table id="jobs"><tbody><tr><td class="empty">—</td></tr></tbody></table>
+</div>
+
+<h2>Recent executions</h2>
+<label class="row muted" style="font-size:12.5px; margin-bottom:8px">
+  <input type="checkbox" id="incAdhoc" onchange="loadExecs()" style="width:auto"> include ad-hoc (/send)
+</label>
+<div class="card" style="padding:0; overflow:hidden" id="execs"><div class="empty">—</div></div>
+
+<h2>Ad-hoc send</h2>
+<div class="card">
+  <div class="muted" style="margin-bottom:8px; font-size:12.5px">
+    POST /send — run steps without a job. Edit the JSON and Run.
+  </div>
+  <textarea id="sendBody" rows="9"></textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="primary" onclick="runSend()">Run</button>
+    <span class="muted" id="sendStatus"></span>
+  </div>
+  <pre id="sendOut" style="display:none"></pre>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let TOKEN = localStorage.getItem("kr_token") || "";
+
+const SEND_TEMPLATE = JSON.stringify({
+  timezone: "Asia/Kuala_Lumpur",
+  steps: [{ step_id: "alert", order_index: 1, type: "notification",
+            config: { channels: ["tg_ops"], message_template: "hello from dashboard 👋" } }]
+}, null, 2);
+
+function toast(msg, bad) {
+  const t = $("#toast"); t.textContent = msg; t.style.borderColor = bad ? "var(--fail)" : "var(--border)";
+  t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+function saveToken() {
+  TOKEN = $("#token").value.trim(); localStorage.setItem("kr_token", TOKEN);
+  toast("Token saved"); loadAll();
+}
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (TOKEN) opt.headers["Authorization"] = "Bearer " + TOKEN;
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  const text = await r.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
+  return data;
+}
+function esc(s) { return String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function fmt(t) { if (!t) return ""; const d = new Date(t); return isNaN(d) ? t : d.toLocaleString(); }
+function dur(a, b) { if (!a || !b) return ""; const ms = new Date(b) - new Date(a); return (ms / 1000).toFixed(1) + "s"; }
+
+async function loadAll() { loadStats(); loadJobs(); loadExecs(); }
+
+async function loadStats() {
+  const el = $("#stats"); el.innerHTML = '<span class="faint">checking…</span>';
+  try {
+    const s = await api("GET", "/stats");
+    $("#conn").textContent = "● connected";  $("#conn").style.color = "var(--ok)";
+    const d = (ok) => `<span class="dot ${ok ? "ok" : "fail"}"></span>`;
+    el.innerHTML = [
+      `<span class="chip">${d(s.scheduler_running)}scheduler</span>`,
+      `<span class="chip">jobs <b>${s.jobs_total}</b></span>`,
+      `<span class="chip">queue <b>${s.queue_size}</b>/<span class="muted">${s.workers}w · ${esc(s.queue_type)}</span></span>`,
+      `<span class="chip">rate <b>${s.rate_limit_per_sec || "∞"}</b>/s</span>`,
+      `<span class="chip">${d(s.telegram_ok)}telegram</span>`,
+      `<span class="chip">${d(s.smtp_ok)}smtp</span>`,
+      `<span class="chip">${d(s.webhook_ok)}webhook</span>`,
+      `<span class="chip">fail/1h <b style="color:${s.failures_last_hour ? "var(--fail)" : "inherit"}">${s.failures_last_hour}</b></span>`,
+      `<span class="chip muted">last ${fmt(s.last_execution_at) || "—"}</span>`,
+    ].join("");
+  } catch (e) {
+    $("#conn").textContent = "● " + e.message; $("#conn").style.color = "var(--fail)";
+    el.innerHTML = `<span class="empty">${esc(e.message)} — check your token.</span>`;
+  }
+}
+
+async function loadJobs() {
+  const tb = $("#jobs").querySelector("tbody");
+  try {
+    const jobs = await api("GET", "/jobs");
+    if (!jobs.length) { tb.innerHTML = '<tr><td class="empty">No jobs.</td></tr>'; return; }
+    tb.innerHTML = `<tr><th>Title</th><th>Cron</th><th>TZ</th><th>Next run</th><th>On</th><th></th></tr>` +
+      jobs.map(j => `<tr>
+        <td>${esc(j.title)}<div class="faint mono" style="font-size:11px">${esc(j.id)}</div></td>
+        <td class="mono">${esc(j.cron)}</td>
+        <td class="muted">${esc(j.timezone)}</td>
+        <td class="muted mono" style="font-size:12px">${fmt(j.next_run_at)}</td>
+        <td><label class="toggle"><input type="checkbox" ${j.enabled ? "checked" : ""}
+            onchange="toggleJob('${j.id}', this.checked)"><span></span></label></td>
+        <td><button class="sm" onclick="trigger('${j.id}', '${esc(j.title)}')">▶ Trigger</button></td>
+      </tr>`).join("");
+  } catch (e) { tb.innerHTML = `<tr><td class="empty">${esc(e.message)}</td></tr>`; }
+}
+
+async function toggleJob(id, enabled) {
+  try { await api("PATCH", "/jobs/" + id, { enabled }); toast((enabled ? "Enabled" : "Disabled")); loadJobs(); }
+  catch (e) { toast(e.message, true); loadJobs(); }
+}
+
+async function trigger(id, title) {
+  toast("Triggering " + title + "…");
+  try {
+    const r = await api("POST", "/jobs/" + id + "/trigger?wait=true&timeout=60");
+    toast(title + ": " + r.status, r.status !== "success");
+    loadExecs();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadExecs() {
+  const el = $("#execs");
+  try {
+    const inc = $("#incAdhoc").checked ? "&include_adhoc=true" : "";
+    const execs = await api("GET", "/executions?limit=25" + inc);
+    if (!execs.length) { el.innerHTML = '<div class="empty">No executions.</div>'; return; }
+    el.innerHTML = execs.map(e => {
+      const steps = (e.steps || []).map(s => `
+        <div style="margin-top:8px">
+          <span class="tag">${esc(s.type)}</span>
+          <b class="${"s-" + s.status}">${esc(s.step_id)}</b>
+          <span class="muted">· ${esc(s.status)} · exit ${s.exit_code} · ${dur(s.started_at, s.finished_at)}</span>
+          ${s.stdout ? `<pre>${esc(s.stdout)}</pre>` : ""}
+          ${s.stderr ? `<pre style="border-color:var(--fail)">${esc(s.stderr)}</pre>` : ""}
+          ${s.error ? `<div class="s-failed mono" style="margin-top:4px">${esc(s.error)}</div>` : ""}
+        </div>`).join("");
+      return `<details class="exec">
+        <summary>
+          <span class="s-${e.status}" style="width:62px">${esc(e.status)}</span>
+          <span class="mono muted" style="flex:1; font-size:12px">${esc(e.job_id)}</span>
+          <span class="tag">${esc(e.trigger_type)}</span>
+          <span class="faint mono" style="font-size:12px">${fmt(e.triggered_at)}</span>
+        </summary>
+        <div class="body">${steps || '<span class="faint">no steps</span>'}</div>
+      </details>`;
+    }).join("");
+  } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+async function runSend() {
+  const out = $("#sendOut"), st = $("#sendStatus");
+  st.textContent = "running…"; out.style.display = "none";
+  try {
+    const body = JSON.parse($("#sendBody").value);
+    const r = await api("POST", "/send", body);
+    st.textContent = ""; out.style.display = "block";
+    out.textContent = JSON.stringify(r, null, 2);
+    toast("send: " + r.status, r.status !== "success");
+    loadExecs();
+  } catch (e) { st.textContent = ""; toast(e.message, true); out.style.display = "block"; out.textContent = e.message; }
+}
+
+// init
+$("#token").value = TOKEN;
+$("#sendBody").value = SEND_TEMPLATE;
+if (TOKEN) loadAll();
+</script>
+</body>
+</html>

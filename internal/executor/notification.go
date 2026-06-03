@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,28 +61,33 @@ func (e *NotificationExecutor) Execute(ctx context.Context, runCtx *model.RunCon
 		payload.Title = title
 	}
 
-	var lastErr error
+	var errs []error
+	sent := 0
 	for _, chID := range cfg.Channels {
 		ch, err := e.store.GetChannelResource(ctx, chID)
 		if err != nil {
-			lastErr = fmt.Errorf("channel %q: %w", chID, err)
+			errs = append(errs, fmt.Errorf("channel %q: %w", chID, err))
 			continue
 		}
 		var prov *model.Provider
 		if ch.ProviderID != "" {
 			prov, err = e.store.GetProvider(ctx, ch.ProviderID)
 			if err != nil {
-				lastErr = fmt.Errorf("provider for channel %q: %w", chID, err)
+				errs = append(errs, fmt.Errorf("provider for channel %q: %w", chID, err))
 				continue
 			}
 		}
 		if err := notifier.SendViaChannelResource(ctx, payload, *ch, prov, e.notifiers); err != nil {
-			lastErr = fmt.Errorf("send to %q: %w", chID, err)
+			errs = append(errs, fmt.Errorf("send to %q: %w", chID, err))
+			continue
 		}
+		sent++
 	}
 
-	if lastErr != nil {
-		return model.StepResult{Status: "failed", Error: lastErr.Error()}
+	stdout := fmt.Sprintf("%d/%d channels sent", sent, len(cfg.Channels))
+	if len(errs) > 0 {
+		// Report every channel failure, not just the last one.
+		return model.StepResult{Status: "failed", Stdout: stdout, Error: errors.Join(errs...).Error()}
 	}
-	return model.StepResult{Status: "success"}
+	return model.StepResult{Status: "success", Stdout: stdout}
 }

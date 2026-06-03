@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"crontab-reminder/internal/model"
 	"crontab-reminder/internal/tmpl"
@@ -60,7 +59,10 @@ func (e *WebhookExecutor) Execute(ctx context.Context, runCtx *model.RunContext,
 		req.Header.Set(k, rendered)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	// No client-level timeout: the step's context (set by the scheduler from
+	// step.Timeout) already bounds the request. A fixed client timeout here
+	// would silently cap any longer configured step timeout.
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return model.StepResult{Status: "failed", Error: "request: " + err.Error()}

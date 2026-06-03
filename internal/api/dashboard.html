@@ -110,9 +110,16 @@
 </div>
 
 <h2>Recent executions</h2>
-<label class="row muted" style="font-size:12.5px; margin-bottom:8px">
-  <input type="checkbox" id="incAdhoc" onchange="loadExecs()" style="width:auto"> include ad-hoc (/send)
-</label>
+<div class="row" style="margin-bottom:8px; justify-content:space-between">
+  <label class="row muted" style="font-size:12.5px">
+    <input type="checkbox" id="incAdhoc" onchange="resetExecs()" style="width:auto"> include ad-hoc (/send)
+  </label>
+  <div class="row" style="gap:8px">
+    <button class="sm" id="execPrev" onclick="pageExecs(-1)">‹ Prev</button>
+    <span class="muted mono" id="execPage" style="font-size:12.5px">page 1</span>
+    <button class="sm" id="execNext" onclick="pageExecs(1)">Next ›</button>
+  </div>
+</div>
 <div class="card" style="padding:0; overflow:hidden" id="execs"><div class="empty">—</div></div>
 
 <h2>Ad-hoc send</h2>
@@ -270,12 +277,27 @@ async function trigger(id, title) {
   } catch (e) { toast(e.message, true); }
 }
 
+const EXEC_PAGE_SIZE = 10;
+let execPage = 0;
+
+function resetExecs() { execPage = 0; loadExecs(); }
+function pageExecs(delta) { execPage = Math.max(0, execPage + delta); loadExecs(); }
+
 async function loadExecs() {
   const el = $("#execs");
   try {
     const inc = $("#incAdhoc").checked ? "&include_adhoc=true" : "";
-    const execs = await api("GET", "/executions?limit=25" + inc);
-    if (!execs.length) { el.innerHTML = '<div class="empty">No executions.</div>'; return; }
+    const offset = execPage * EXEC_PAGE_SIZE;
+    const execs = await api("GET", `/executions?limit=${EXEC_PAGE_SIZE}&offset=${offset}` + inc);
+    // No total count from the API: prev disabled on the first page, next disabled
+    // once a short page comes back (fewer than a full page => last page).
+    $("#execPage").textContent = "page " + (execPage + 1);
+    $("#execPrev").disabled = execPage === 0;
+    $("#execNext").disabled = execs.length < EXEC_PAGE_SIZE;
+    if (!execs.length) {
+      el.innerHTML = `<div class="empty">${execPage ? "No more executions." : "No executions."}</div>`;
+      return;
+    }
     el.innerHTML = execs.map(e => {
       const steps = (e.steps || []).map(s => `
         <div style="margin-top:8px">

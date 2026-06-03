@@ -64,25 +64,49 @@ func (s *Server) Router() http.Handler {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
-		r.Get("/stats", s.statsHandler)
-		r.Post("/jobs", s.createJob)
-		r.Get("/jobs", s.listJobs)
-		r.Get("/jobs/{id}", s.getJob)
-		r.Patch("/jobs/{id}", s.patchJob)
-		r.Delete("/jobs/{id}", s.deleteJob)
-		r.Get("/executions", s.listExecutions)
-		r.Get("/executions/{id}", s.getExecutionHandler)
-		r.Post("/jobs/{id}/trigger", s.triggerJob)
-		r.Post("/providers", s.createProvider)
-		r.Get("/providers", s.listProviders)
-		r.Delete("/providers/{id}", s.deleteProvider)
-		r.Post("/channels", s.createChannel)
-		r.Get("/channels", s.listChannels)
-		r.Delete("/channels/{id}", s.deleteChannel)
-		r.Post("/diagnostics/smtp", s.smtpDiagnosticHandler)
+
+		// Fast routes: pure DB work. Bound by a short timeout so a slow client
+		// or a wedged handler can't hold a connection indefinitely.
+		r.Group(func(r chi.Router) {
+			r.Use(timeoutMiddleware(15 * time.Second))
+			r.Get("/stats", s.statsHandler)
+			r.Post("/jobs", s.createJob)
+			r.Get("/jobs", s.listJobs)
+			r.Get("/jobs/{id}", s.getJob)
+			r.Patch("/jobs/{id}", s.patchJob)
+			r.Delete("/jobs/{id}", s.deleteJob)
+			r.Get("/executions", s.listExecutions)
+			r.Get("/executions/{id}", s.getExecutionHandler)
+			r.Post("/providers", s.createProvider)
+			r.Get("/providers", s.listProviders)
+			r.Delete("/providers/{id}", s.deleteProvider)
+			r.Post("/channels", s.createChannel)
+			r.Get("/channels", s.listChannels)
+			r.Delete("/channels/{id}", s.deleteChannel)
+		})
+
+		// SMTP diagnostics performs a live network probe; give it a higher
+		// ceiling than the fast routes but still bound it so it can't hang.
+		r.Group(func(r chi.Router) {
+			r.Use(timeoutMiddleware(30 * time.Second))
+			r.Post("/diagnostics/smtp", s.smtpDiagnosticHandler)
+		})
+
+		// Long-running synchronous endpoints: no blanket timeout. /send runs
+		// steps inline (per-step timeout, up to 5min by default) and trigger
+		// honors its own ?wait timeout; both manage their own ctx deadlines.
 		r.Post("/send", s.sendHandler)
+		r.Post("/jobs/{id}/trigger", s.triggerJob)
 	})
 	return r
+}
+
+// timeoutMiddleware bounds a handler with http.TimeoutHandler, returning a JSON
+// 503 body if the deadline is exceeded.
+func timeoutMiddleware(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.TimeoutHandler(next, d, `{"error":"request timeout"}`)
+	}
 }
 
 // --- Request types ---

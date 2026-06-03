@@ -634,10 +634,12 @@ func scanExecution(row interface{ Scan(dest ...any) error }) (model.Execution, e
 		e.ScheduledAt = &t
 	}
 	if startedAt.Valid {
-		e.StartedAt = startedAt.Time.UTC()
+		t := startedAt.Time.UTC()
+		e.StartedAt = &t
 	}
 	if finishedAt.Valid {
-		e.FinishedAt = finishedAt.Time.UTC()
+		t := finishedAt.Time.UTC()
+		e.FinishedAt = &t
 	}
 	if triggeredAt.Valid {
 		e.TriggeredAt = triggeredAt.Time.UTC()
@@ -670,10 +672,12 @@ FROM execution_steps WHERE execution_id=? ORDER BY rowid ASC
 			return nil, err
 		}
 		if startedAt.Valid {
-			es.StartedAt = startedAt.Time.UTC()
+			t := startedAt.Time.UTC()
+			es.StartedAt = &t
 		}
 		if finishedAt.Valid {
-			es.FinishedAt = finishedAt.Time.UTC()
+			t := finishedAt.Time.UTC()
+			es.FinishedAt = &t
 		}
 		out = append(out, es)
 	}
@@ -859,7 +863,8 @@ func scanJob(scanner interface{ Scan(dest ...any) error }) (model.Job, error) {
 	j.CreatedAt = j.CreatedAt.UTC()
 	j.UpdatedAt = j.UpdatedAt.UTC()
 	if lastRun.Valid {
-		j.LastRunAt = lastRun.Time.UTC()
+		t := lastRun.Time.UTC()
+		j.LastRunAt = &t
 	}
 	return j, nil
 }
@@ -878,8 +883,8 @@ func nullableString(v string) any {
 	return v
 }
 
-func nullableTime(v time.Time) any {
-	if v.IsZero() {
+func nullableTime(v *time.Time) any {
+	if v == nil || v.IsZero() {
 		return nil
 	}
 	return v.UTC()

@@ -64,11 +64,12 @@
   .exec .body { padding: 4px 16px 14px; }
   .toggle { position: relative; width: 38px; height: 20px; }
   .toggle input { display: none; }
-  .toggle span { position: absolute; inset: 0; background: var(--faint); border-radius: 999px; transition: .15s; }
-  .toggle span::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%;
-        background: #fff; top: 2px; left: 2px; transition: .15s; }
-  .toggle input:checked + span { background: var(--ok); }
-  .toggle input:checked + span::after { transform: translateX(18px); }
+  .toggle span { position: absolute; inset: 0; background: #3a3e46; border: 1px solid #565b64;
+        border-radius: 999px; transition: .15s; }
+  .toggle span::after { content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%;
+        background: #c9ccd1; top: 2px; left: 2px; transition: .15s; }
+  .toggle input:checked + span { background: var(--ok); border-color: var(--ok); }
+  .toggle input:checked + span::after { transform: translateX(18px); background: #fff; }
   #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
            background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
            padding: 10px 16px; opacity: 0; transition: .2s; pointer-events: none; max-width: 80vw; }
@@ -89,7 +90,21 @@
 <h2>Status</h2>
 <div class="chips" id="stats"><span class="empty">Save your token, then refresh.</span></div>
 
-<h2>Jobs</h2>
+<h2>Jobs <button class="sm" onclick="toggleNewJob()" style="margin-left:6px">＋ New job</button></h2>
+<div class="card" id="newJob" style="display:none; margin-bottom:10px">
+  <div class="row" style="margin-bottom:8px">
+    <input id="njTitle" placeholder="title" style="flex:2; min-width:160px">
+    <input id="njCron" placeholder="cron e.g. 0 */6 * * *" style="flex:1; min-width:140px" class="mono">
+    <input id="njTz" placeholder="timezone" value="Asia/Kuala_Lumpur" style="flex:1; min-width:140px">
+    <label class="row" style="gap:6px"><input type="checkbox" id="njEnabled" checked style="width:auto"> enabled</label>
+  </div>
+  <textarea id="njSteps" rows="8"></textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="primary" onclick="createJob()">Create</button>
+    <button class="sm" onclick="toggleNewJob()">Cancel</button>
+    <span class="muted" id="njStatus"></span>
+  </div>
+</div>
 <div class="card" style="padding:0; overflow:hidden">
   <table id="jobs"><tbody><tr><td class="empty">—</td></tr></tbody></table>
 </div>
@@ -195,7 +210,10 @@ async function loadJobs() {
         <td class="muted mono" style="font-size:12px">${fmt(j.next_run_at)}</td>
         <td><label class="toggle"><input type="checkbox" ${j.enabled ? "checked" : ""}
             onchange="toggleJob('${j.id}', this.checked)"><span></span></label></td>
-        <td><button class="sm" onclick="trigger('${j.id}', '${esc(j.title)}')">▶ Trigger</button></td>
+        <td class="row" style="gap:6px">
+          <button class="sm" onclick="trigger('${j.id}', '${esc(j.title)}')">▶ Trigger</button>
+          <button class="sm" onclick="delJob('${j.id}', '${esc(j.title)}')" title="Delete job">✕</button>
+        </td>
       </tr>`).join("");
   } catch (e) { tb.innerHTML = `<tr><td class="empty">${esc(e.message)}</td></tr>`; }
 }
@@ -203,6 +221,44 @@ async function loadJobs() {
 async function toggleJob(id, enabled) {
   try { await api("PATCH", "/jobs/" + id, { enabled }); toast((enabled ? "Enabled" : "Disabled")); loadJobs(); }
   catch (e) { toast(e.message, true); loadJobs(); }
+}
+
+const NEW_JOB_STEPS = JSON.stringify([
+  { step_id: "step1", order_index: 1, type: "notification",
+    config: { channels: ["tg_ops_ch"], message_template: "hello" },
+    continue_on_error: false }
+], null, 2);
+
+function toggleNewJob() {
+  const c = $("#newJob"); const show = c.style.display === "none";
+  c.style.display = show ? "block" : "none";
+  if (show && !$("#njSteps").value) $("#njSteps").value = NEW_JOB_STEPS;
+}
+
+async function createJob() {
+  const st = $("#njStatus"); st.textContent = "";
+  let steps;
+  try { steps = JSON.parse($("#njSteps").value); }
+  catch (e) { toast("steps JSON: " + e.message, true); return; }
+  const body = {
+    title: $("#njTitle").value.trim(),
+    cron: $("#njCron").value.trim(),
+    timezone: $("#njTz").value.trim(),
+    enabled: $("#njEnabled").checked,
+    steps,
+  };
+  try {
+    await api("POST", "/jobs", body);
+    toast("Job created");
+    $("#njTitle").value = ""; $("#njCron").value = ""; $("#njSteps").value = "";
+    toggleNewJob(); loadJobs();
+  } catch (e) { toast(e.message, true); st.textContent = e.message; }
+}
+
+async function delJob(id, title) {
+  if (!confirm('Delete job "' + title + '"?\nThis removes it and its execution history.')) return;
+  try { await api("DELETE", "/jobs/" + id); toast("Deleted " + title); loadJobs(); }
+  catch (e) { toast(e.message, true); }
 }
 
 async function trigger(id, title) {

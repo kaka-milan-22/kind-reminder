@@ -1,18 +1,18 @@
 package tmpl
 
 import (
-"bytes"
-"fmt"
-"text/template"
-"time"
+	"bytes"
+	"fmt"
+	"text/template"
+	"time"
 
-"crontab-reminder/internal/model"
+	"crontab-reminder/internal/model"
 )
 
 type Context struct {
-Job   *model.Job
-Steps map[string]model.StepResult
-Now   time.Time
+	Job   *model.Job
+	Steps map[string]model.StepResult
+	Now   time.Time
 }
 
 // NowInTZ returns time.Now() in the given timezone. Falls back to UTC.
@@ -36,21 +36,21 @@ func NowInJobTZ(job *model.Job) time.Time {
 // Render renders a Go text/template string with the given context.
 // Returns an error if the template fails to parse or execute.
 func Render(tpl string, ctx Context) (string, error) {
-if tpl == "" {
-return "", nil
-}
-t, err := template.New("").Parse(tpl)
-if err != nil {
-return "", fmt.Errorf("template parse: %w", err)
-}
-data := map[string]any{
-"job":   ctx.Job,
-"steps": ctx.Steps,
-"now":   ctx.Now,
-}
-var buf bytes.Buffer
-if err := t.Execute(&buf, data); err != nil {
-return "", fmt.Errorf("template execute: %w", err)
-}
-return buf.String(), nil
+	if tpl == "" {
+		return "", nil
+	}
+	t, err := template.New("").Parse(tpl)
+	if err != nil {
+		return "", fmt.Errorf("template parse: %w", err)
+	}
+	data := map[string]any{
+		"job":   ctx.Job,
+		"steps": ctx.Steps,
+		"now":   ctx.Now,
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("template execute: %w", err)
+	}
+	return buf.String(), nil
 }

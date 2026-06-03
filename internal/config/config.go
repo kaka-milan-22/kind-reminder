@@ -29,6 +29,12 @@ type Config struct {
 	SchedulerMaxLateness time.Duration
 
 	Webhook WebhookConfig
+
+	// Lists holds block-sequence values from the YAML config, keyed by dotted
+	// path (e.g. "webhook.urls" -> ["https://a", "https://b"]). It is the
+	// access point for list-valued keys; typed fields can read from it as
+	// needed.
+	Lists map[string][]string
 }
 
 type QueueConfig struct {
@@ -163,9 +169,17 @@ func applyYAMLFile(cfg *Config, path string) error {
 	}
 	defer f.Close()
 
-	flat, err := parseSimpleYAML(f)
+	flat, lists, err := parseSimpleYAML(f)
 	if err != nil {
 		return fmt.Errorf("parse config file %q: %w", path, err)
+	}
+	if len(lists) > 0 {
+		if cfg.Lists == nil {
+			cfg.Lists = make(map[string][]string, len(lists))
+		}
+		for k, v := range lists {
+			cfg.Lists[k] = v
+		}
 	}
 
 	if v := flat["server_port"]; v != "" {
@@ -230,8 +244,14 @@ func applyYAMLFile(cfg *Config, path string) error {
 	return nil
 }
 
-func parseSimpleYAML(file *os.File) (map[string]string, error) {
-	out := map[string]string{}
+// parseSimpleYAML flattens a small YAML subset into dotted keys. Scalars land
+// in the first map (e.g. "smtp.host" -> "mail"); sequences land in the second
+// (e.g. a "webhook.urls:" key followed by "- a"/"- b" -> {"webhook.urls": [a, b]}).
+// It supports nested maps with 2-space indentation, quoted scalars, and block
+// sequences; it does not support inline flow syntax ([a, b]) or lists of maps.
+func parseSimpleYAML(file *os.File) (map[string]string, map[string][]string, error) {
+	scalars := map[string]string{}
+	lists := map[string][]string{}
 	stack := make([]string, 0, 4)
 	scanner := bufio.NewScanner(file)
 	lineNo := 0
@@ -242,28 +262,41 @@ func parseSimpleYAML(file *os.File) (map[string]string, error) {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "-") {
-			return nil, fmt.Errorf("line %d: list syntax is not supported", lineNo)
-		}
 
 		indent := leadingSpaces(line)
 		if indent%2 != 0 {
-			return nil, fmt.Errorf("line %d: indentation must use multiples of 2 spaces", lineNo)
+			return nil, nil, fmt.Errorf("line %d: indentation must use multiples of 2 spaces", lineNo)
 		}
 		level := indent / 2
+
+		// Block sequence item: belongs to the most recent key (the current
+		// stack), which must have been opened with an empty value.
+		if trimmed == "-" || strings.HasPrefix(trimmed, "- ") {
+			if len(stack) == 0 {
+				return nil, nil, fmt.Errorf("line %d: list item without a parent key", lineNo)
+			}
+			key := strings.Join(stack, ".")
+			if _, taken := scalars[key]; taken {
+				return nil, nil, fmt.Errorf("line %d: %q already has a scalar value", lineNo, key)
+			}
+			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+			lists[key] = append(lists[key], unquote(item))
+			continue
+		}
+
 		if level > len(stack) {
-			return nil, fmt.Errorf("line %d: invalid indentation level", lineNo)
+			return nil, nil, fmt.Errorf("line %d: invalid indentation level", lineNo)
 		}
 		stack = stack[:level]
 
 		key, raw, ok := strings.Cut(trimmed, ":")
 		if !ok {
-			return nil, fmt.Errorf("line %d: expected key:value", lineNo)
+			return nil, nil, fmt.Errorf("line %d: expected key:value", lineNo)
 		}
 		key = strings.TrimSpace(key)
 		raw = strings.TrimSpace(raw)
 		if key == "" {
-			return nil, fmt.Errorf("line %d: empty key", lineNo)
+			return nil, nil, fmt.Errorf("line %d: empty key", lineNo)
 		}
 
 		if raw == "" {
@@ -272,12 +305,12 @@ func parseSimpleYAML(file *os.File) (map[string]string, error) {
 		}
 
 		path := append(append([]string{}, stack...), key)
-		out[strings.Join(path, ".")] = unquote(raw)
+		scalars[strings.Join(path, ".")] = unquote(raw)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	return scalars, lists, nil
 }
 
 func leadingSpaces(s string) int {

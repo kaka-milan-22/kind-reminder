@@ -59,7 +59,10 @@ func (e *ShellExecutor) Execute(ctx context.Context, _ *model.RunContext, step m
 		return model.StepResult{Status: "failed", Error: "shell config: script is required"}
 	}
 
-	cmd := exec.CommandContext(ctx, cfg.Script)
+	// Run the script through the shell so it supports full shell syntax
+	// (pipes, &&, env expansion, builtins). The whole string is the program;
+	// individual binaries are not invoked directly.
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", cfg.Script)
 	stdout := &cappedBuffer{max: maxShellOutputBytes}
 	stderr := &cappedBuffer{max: maxShellOutputBytes}
 	cmd.Stdout = stdout

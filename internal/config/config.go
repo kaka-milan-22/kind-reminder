@@ -22,8 +22,6 @@ type Config struct {
 	SMTPPass string
 	SMTPFrom string
 
-	Workers     int
-	Queue       int
 	QueueConfig QueueConfig
 
 	SchedulerMaxLateness time.Duration
@@ -63,23 +61,15 @@ func Load() (Config, error) {
 	if cfg.APIToken == "" {
 		return Config{}, fmt.Errorf("API_TOKEN is required (or set api_token in YAML)")
 	}
-	if cfg.Workers <= 0 {
-		cfg.Workers = 10
-	}
-	if cfg.Queue <= 0 {
-		cfg.Queue = 100
-	}
 	if cfg.QueueConfig.Type == "" {
 		cfg.QueueConfig.Type = "memory"
 	}
 	if cfg.QueueConfig.Workers <= 0 {
-		cfg.QueueConfig.Workers = cfg.Workers
+		cfg.QueueConfig.Workers = 10
 	}
 	if cfg.QueueConfig.Size <= 0 {
-		cfg.QueueConfig.Size = cfg.Queue
+		cfg.QueueConfig.Size = 100
 	}
-	cfg.Workers = cfg.QueueConfig.Workers
-	cfg.Queue = cfg.QueueConfig.Size
 	return cfg, nil
 }
 
@@ -88,8 +78,6 @@ func defaultConfig() Config {
 		ServerPort: "8080",
 		DBPath:     "./reminder.db",
 		SMTPPort:   587,
-		Workers:    10,
-		Queue:      100,
 		QueueConfig: QueueConfig{
 			Type:    "memory",
 			Workers: 10,
@@ -132,11 +120,9 @@ func applyEnv(cfg *Config) {
 		cfg.SMTPPort = v
 	}
 	if v := parseEnvInt("WORKERS"); v > 0 {
-		cfg.Workers = v
 		cfg.QueueConfig.Workers = v
 	}
 	if v := parseEnvInt("QUEUE_SIZE"); v > 0 {
-		cfg.Queue = v
 		cfg.QueueConfig.Size = v
 	}
 	if v := os.Getenv("QUEUE_TYPE"); v != "" {
@@ -208,14 +194,6 @@ func applyYAMLFile(cfg *Config, path string) error {
 	}
 	if v, ok := parseInt(flat["smtp.port"]); ok && v > 0 {
 		cfg.SMTPPort = v
-	}
-	if v, ok := parseInt(flat["scheduler.workers"]); ok && v > 0 {
-		cfg.Workers = v
-		cfg.QueueConfig.Workers = v
-	}
-	if v, ok := parseInt(flat["scheduler.queue_size"]); ok && v > 0 {
-		cfg.Queue = v
-		cfg.QueueConfig.Size = v
 	}
 	if v, ok := parseDuration(flat["scheduler.max_lateness"]); ok {
 		cfg.SchedulerMaxLateness = v

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func parseYAML(t *testing.T, body string) (map[string]string, map[string][]string) {
@@ -76,6 +77,62 @@ func TestParseRejectsOrphanListItem(t *testing.T) {
 	_, _, err := parseSimpleYAML(f)
 	if err == nil || !strings.Contains(err.Error(), "without a parent") {
 		t.Fatalf("expected orphan-list error, got %v", err)
+	}
+}
+
+func TestQueueConfigFromQueueBlock(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(p, []byte(`api_token: secret
+scheduler:
+  max_lateness: 2m
+queue:
+  type: memory
+  workers: 7
+  size: 250
+  rate_limit_per_sec: 5
+`), 0o600)
+	t.Setenv("CONFIG_FILE", p)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.QueueConfig.Workers != 7 {
+		t.Errorf("Workers = %d, want 7", cfg.QueueConfig.Workers)
+	}
+	if cfg.QueueConfig.Size != 250 {
+		t.Errorf("Size = %d, want 250", cfg.QueueConfig.Size)
+	}
+	if cfg.QueueConfig.RateLimitPerSec != 5 {
+		t.Errorf("RateLimitPerSec = %d, want 5", cfg.QueueConfig.RateLimitPerSec)
+	}
+	if cfg.SchedulerMaxLateness != 2*time.Minute {
+		t.Errorf("MaxLateness = %v, want 2m", cfg.SchedulerMaxLateness)
+	}
+}
+
+func TestLegacySchedulerWorkersIgnored(t *testing.T) {
+	// scheduler.workers / scheduler.queue_size are no longer read; the queue
+	// block (or its defaults) is authoritative. Here only legacy keys are set,
+	// so the defaults 10/100 must apply.
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(p, []byte(`api_token: secret
+scheduler:
+  workers: 99
+  queue_size: 999
+  max_lateness: 1m
+`), 0o600)
+	t.Setenv("CONFIG_FILE", p)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.QueueConfig.Workers != 10 {
+		t.Errorf("Workers = %d, want default 10 (legacy scheduler.workers must be ignored)", cfg.QueueConfig.Workers)
+	}
+	if cfg.QueueConfig.Size != 100 {
+		t.Errorf("Size = %d, want default 100 (legacy scheduler.queue_size must be ignored)", cfg.QueueConfig.Size)
 	}
 }
 

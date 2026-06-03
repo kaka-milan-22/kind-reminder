@@ -37,19 +37,28 @@ func (q *MemoryQueue[T]) Push(ctx context.Context, p T) error {
 }
 
 func (q *MemoryQueue[T]) StartWorkers(ctx context.Context, handler WorkerHandler[T]) {
+	// A single shared ticker throttles the whole pool: every interval emits one
+	// tick, and only one worker can receive it, so the global dispatch rate is
+	// q.rate/sec regardless of worker count. A per-worker ticker (the previous
+	// design) would have multiplied the effective rate by q.workers.
+	var tick <-chan time.Time
+	if q.rate > 0 {
+		ticker := time.NewTicker(time.Second / time.Duration(q.rate))
+		go func() {
+			<-ctx.Done()
+			ticker.Stop()
+		}()
+		tick = ticker.C
+	}
+
 	for i := 0; i < q.workers; i++ {
 		go func() {
-			var ticker *time.Ticker
-			if q.rate > 0 {
-				ticker = time.NewTicker(time.Second / time.Duration(q.rate))
-				defer ticker.Stop()
-			}
 			for {
 				select {
 				case p := <-q.ch:
-					if ticker != nil {
+					if tick != nil {
 						select {
-						case <-ticker.C:
+						case <-tick:
 						case <-ctx.Done():
 							return
 						}

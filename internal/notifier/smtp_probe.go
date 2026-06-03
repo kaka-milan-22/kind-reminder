@@ -10,9 +10,21 @@ import (
 	"net/smtp"
 	"slices"
 	"strings"
+	"time"
 
 	"crontab-reminder/internal/model"
 )
+
+// smtpDeadline returns the absolute deadline to apply (via conn.SetDeadline) to
+// an SMTP connection. net/smtp performs blocking I/O that ignores context, so
+// without a connection deadline a server that stalls mid-conversation would
+// hang the caller indefinitely. Falls back to 30s when ctx carries no deadline.
+func smtpDeadline(ctx context.Context) time.Time {
+	if dl, ok := ctx.Deadline(); ok {
+		return dl
+	}
+	return time.Now().Add(30 * time.Second)
+}
 
 var fakeIPNet19818 = mustParseCIDR("198.18.0.0/15")
 
@@ -40,6 +52,7 @@ func ProbeSMTP(ctx context.Context, cfg EmailConfig, target string) model.SMTPDi
 	if err != nil {
 		return finishSMTPDiagnostic(diag, "tcp_connect", annotateSMTPError(err, resolution))
 	}
+	_ = conn.SetDeadline(smtpDeadline(ctx))
 	recordSMTPStage(&diag, "tcp_connect", true, "connected to "+addr, nil)
 
 	client, err := smtp.NewClient(conn, cfg.Host)

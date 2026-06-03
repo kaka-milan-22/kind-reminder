@@ -47,6 +47,9 @@ func (n *EmailNotifier) Send(ctx context.Context, payload model.NotificationPayl
 	if err != nil {
 		return fmt.Errorf("smtp connect %s: %w", addr, annotateSMTPError(err, resolution))
 	}
+	// net/smtp ignores context; bound the whole session with a connection
+	// deadline so a stalling server can't hang past the caller's timeout.
+	_ = conn.SetDeadline(smtpDeadline(ctx))
 	client, err := smtp.NewClient(conn, n.cfg.Host)
 	if err != nil {
 		_ = conn.Close()

@@ -38,8 +38,11 @@ duplicate/missing runs). Package layout under `internal/`: `scheduler`, `queue`,
 - Each step runs under a ctx with timeout = `step.timeout` seconds (default 300).
 - **Retry:** up to `step.retry` attempts, backoff 2s → 5s → 10s between tries.
   (Backoff uses `time.Sleep`, so it doesn't abort early on shutdown.)
-- `continue_on_error` (default true) decides whether a failed step aborts the rest
-  of the job. The execution is `failed` if any non-continue step failed.
+- `continue_on_error` (default true) decides only whether a failed step aborts the
+  rest of the job. It does NOT mask the failure: the execution is marked `failed`
+  if **any** step failed (the execution error aggregates all failed steps as
+  `stepID: error; ...`). This keeps a failed notification from being reported as a
+  successful run.
 - The job's steps are reloaded from the DB at run time (authoritative), not from
   the dispatch snapshot.
 

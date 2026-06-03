@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"crontab-reminder/internal/executor"
@@ -83,8 +84,9 @@ func (s *Server) sendHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var stepRuns []model.ExecutionStep
-	finalStatus := model.ExecutionSuccess
-	var finalErr string
+	// Any failed step fails the execution; continue_on_error only controls
+	// whether to keep running the remaining steps.
+	var failedSteps []string
 
 	for _, sr := range req.Steps {
 		cfg := json.RawMessage("{}")
@@ -108,9 +110,8 @@ func (s *Server) sendHandler(w http.ResponseWriter, r *http.Request) {
 			es := saveStep(r.Context(), s.store, execID, step, res)
 			stepRuns = append(stepRuns, es)
 			runCtx.Results[step.StepID] = res
+			failedSteps = append(failedSteps, step.StepID+": "+res.Error)
 			if !step.ContinueOnError {
-				finalStatus = model.ExecutionFailed
-				finalErr = res.Error
 				break
 			}
 			continue
@@ -144,13 +145,20 @@ func (s *Server) sendHandler(w http.ResponseWriter, r *http.Request) {
 		stepRuns = append(stepRuns, es)
 		runCtx.Results[step.StepID] = res
 
-		if res.Status == "failed" && !step.ContinueOnError {
-			finalStatus = model.ExecutionFailed
-			finalErr = res.Error
-			break
+		if res.Status == "failed" {
+			failedSteps = append(failedSteps, step.StepID+": "+res.Error)
+			if !step.ContinueOnError {
+				break
+			}
 		}
 	}
 
+	finalStatus := model.ExecutionSuccess
+	finalErr := ""
+	if len(failedSteps) > 0 {
+		finalStatus = model.ExecutionFailed
+		finalErr = strings.Join(failedSteps, "; ")
+	}
 	_ = s.store.MarkExecutionFinished(r.Context(), execID, finalStatus, time.Now().UTC(), finalErr)
 
 	writeJSON(w, http.StatusOK, sendResponse{

@@ -104,6 +104,7 @@
 <div class="card">
   <div class="muted" style="margin-bottom:8px; font-size:12.5px">
     POST /send — run steps without a job. Edit the JSON and Run.
+    <span id="chanHint" class="faint"></span>
   </div>
   <textarea id="sendBody" rows="9"></textarea>
   <div class="row" style="margin-top:10px">
@@ -122,7 +123,7 @@ let TOKEN = localStorage.getItem("kr_token") || "";
 const SEND_TEMPLATE = JSON.stringify({
   timezone: "Asia/Kuala_Lumpur",
   steps: [{ step_id: "alert", order_index: 1, type: "notification",
-            config: { channels: ["tg_ops"], message_template: "hello from dashboard 👋" } }]
+            config: { channels: ["tg_ops_ch"], message_template: "hello from dashboard 👋" } }]
 }, null, 2);
 
 function toast(msg, bad) {
@@ -147,7 +148,16 @@ function esc(s) { return String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;",
 function fmt(t) { if (!t) return ""; const d = new Date(t); return isNaN(d) ? t : d.toLocaleString(); }
 function dur(a, b) { if (!a || !b) return ""; const ms = new Date(b) - new Date(a); return (ms / 1000).toFixed(1) + "s"; }
 
-async function loadAll() { loadStats(); loadJobs(); loadExecs(); }
+async function loadAll() { loadStats(); loadJobs(); loadExecs(); loadChannels(); }
+
+async function loadChannels() {
+  try {
+    const ch = await api("GET", "/channels");
+    $("#chanHint").textContent = ch.length
+      ? "· channels: " + ch.map(c => c.id + " (" + c.type + ")").join(", ")
+      : "· no channels configured";
+  } catch { $("#chanHint").textContent = ""; }
+}
 
 async function loadStats() {
   const el = $("#stats"); el.innerHTML = '<span class="faint">checking…</span>';

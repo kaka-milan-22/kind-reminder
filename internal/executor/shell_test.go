@@ -1,9 +1,51 @@
 package executor
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"crontab-reminder/internal/model"
 )
+
+func runShell(t *testing.T, script string) model.StepResult {
+	t.Helper()
+	cfg, _ := json.Marshal(shellConfig{Script: script})
+	return NewShellExecutor().Execute(context.Background(), nil, model.Step{Config: cfg})
+}
+
+func TestShellRunsThroughShell(t *testing.T) {
+	// A space-containing command only works if interpreted by the shell,
+	// not exec'd as a single binary named "echo hi".
+	res := runShell(t, "echo hi && echo bye")
+	if res.Status != "success" {
+		t.Fatalf("status = %q (err %q), want success", res.Status, res.Error)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", res.ExitCode)
+	}
+	if got := strings.TrimSpace(res.Stdout); got != "hi\nbye" {
+		t.Fatalf("stdout = %q, want %q", got, "hi\nbye")
+	}
+}
+
+func TestShellNonZeroExit(t *testing.T) {
+	res := runShell(t, "exit 3")
+	if res.Status != "failed" {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+	if res.ExitCode != 3 {
+		t.Fatalf("exit code = %d, want 3", res.ExitCode)
+	}
+}
+
+func TestShellEmptyScript(t *testing.T) {
+	res := runShell(t, "")
+	if res.Status != "failed" {
+		t.Fatalf("status = %q, want failed for empty script", res.Status)
+	}
+}
 
 func TestCappedBufferTruncates(t *testing.T) {
 	c := &cappedBuffer{max: 10}

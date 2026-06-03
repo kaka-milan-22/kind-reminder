@@ -885,12 +885,15 @@ func nullableTime(v time.Time) any {
 	return v.UTC()
 }
 
+// isUniqueViolation reports whether err is a SQLite UNIQUE constraint failure.
+// It matches only "unique" — NOT the generic "constraint" substring, which
+// also appears in NOT NULL / FOREIGN KEY / CHECK messages and would otherwise
+// cause real errors to be swallowed as benign dedup conflicts.
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "unique") || strings.Contains(s, "constraint")
+	return strings.Contains(strings.ToLower(err.Error()), "unique")
 }
 
 func truncate(s string, maxBytes int) string {

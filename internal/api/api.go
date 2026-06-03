@@ -62,6 +62,8 @@ func (s *Server) Router() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Operations dashboard (unauthenticated static page; its API calls are gated).
+	r.Get("/ui", s.uiHandler)
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 

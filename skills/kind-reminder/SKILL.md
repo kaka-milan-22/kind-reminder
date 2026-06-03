@@ -52,36 +52,34 @@ task — do not edit that `~/.` file yourself unless the user explicitly authori
 it). If `alice exec` is denied, it prints the exact rule to add; surface that to
 the user, don't retry.
 
-## Restart / upgrade the service
+## Restart / upgrade the service (launchd-managed)
 
-`restart.sh` is the canonical path. It stops the old process (via pidfile), runs
-`go build -o kind-reminder ./cmd/server`, then starts the new binary through
-`alice exec` and health-checks `/health`:
+The service runs as a **launchd LaunchAgent** `com.bbwave.kind-reminder`
+(`~/Library/LaunchAgents/`, repo copy `deploy/`). launchd owns the lifecycle:
+`RunAtLoad` + `KeepAlive` (auto-restart on crash; survives terminal/session
+close). The plist launches via `alice exec`, so the AnB **`bob` daemon must be
+running + unlocked** — if it isn't, the service crash-loops every 10s until it is.
+
+Restart / upgrade is just:
 
 ```bash
 cd /Users/bbwave03/claude/kind-reminder && ./restart.sh
 ```
 
-Because `alice exec` uses **execve**, the pidfile PID is the binary itself, so the
-stop logic (`kill` → wait 5s → `kill -9`) works normally.
-
-**Before a real restart, probe non-destructively** (the running server holds :8080,
-so a probe launch fails fast at bind without touching the live instance):
+`restart.sh` now does `go build` + `launchctl kickstart -k gui/$(id -u)/com.bbwave.kind-reminder`
+(it does NOT hand-launch the binary). Manage it directly with:
 
 ```bash
-ABS=/Users/bbwave03/claude/kind-reminder/kind-reminder
-alice exec --env API_TOKEN='<agent-vault:kr-api-token>' \
-  --env TELEGRAM_BOT_TOKEN='<agent-vault:kr-tg-bot-token>' \
-  --env SMTP_PASS='<agent-vault:kr-smtp-pass>' -- "$ABS" >/tmp/kr_probe.log 2>&1 &
-P=$!; sleep 2; kill "$P" 2>/dev/null; cat /tmp/kr_probe.log; rm -f /tmp/kr_probe.log
+launchctl print    gui/$(id -u)/com.bbwave.kind-reminder   # status / pid / state
+launchctl kickstart -k gui/$(id -u)/com.bbwave.kind-reminder  # restart
+launchctl bootout  gui/$(id -u)/com.bbwave.kind-reminder    # STOP (a plain kill just relaunches)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bbwave.kind-reminder.plist  # (re)load
 ```
 
-- `→ exec ... rule=[kind-reminder]` then `server started` then a bind error =
-  allowlist OK **and** secrets inject OK → safe to run `restart.sh`.
-- `invocation not in allowlist.rules` = not blessed → tell the user the rule to
-  add; do **not** run `restart.sh` (it would stop the live server and fail to start).
-
-This probe-first discipline is why the last upgrade caused zero downtime.
+To stop it you must `bootout` — `kill`ing the PID just makes launchd relaunch it.
+Never start the binary by hand; it races the managed instance on :8080. The exec
+allowlist must bless the binary's absolute path (operator-edited
+`~/.anb/alice/exec-allowlist.rules`).
 
 ## Authenticated API calls without exposing the token
 

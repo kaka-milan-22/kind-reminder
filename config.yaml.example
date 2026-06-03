@@ -12,16 +12,23 @@ smtp:
   pass: "pass"
   from: "ops@example.com"
 
-# Scheduling policy. Worker pool / queue sizing lives under `queue:` below.
+# Scheduling policy. Worker pool / queue sizing lives under "queue" below.
+# NOTE: the config parser does not support inline comments — keep comments on
+# their own line, never after a value (e.g. `workers: 10  # ...` would break).
+# max_lateness: skip (don't catch up) jobs overdue by more than this
 scheduler:
-  max_lateness: 1m   # skip (don't catch up) jobs overdue by more than this
+  max_lateness: 1m
 
 # Dispatch queue: concurrency, backlog, and outbound rate limit.
+# type:               only "memory" is implemented
+# workers:            max jobs executed concurrently
+# size:               max tasks buffered waiting for a free worker
+# rate_limit_per_sec: global dispatch cap per second; 0 = unlimited
 queue:
-  type: "memory"           # only "memory" is implemented
-  workers: 10              # max jobs executed concurrently
-  size: 1000               # max tasks buffered waiting for a free worker
-  rate_limit_per_sec: 20   # global dispatch cap; 0 = unlimited
+  type: "memory"
+  workers: 10
+  size: 1000
+  rate_limit_per_sec: 20
 
 webhook:
   enabled: true

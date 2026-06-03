@@ -36,9 +36,21 @@ echo "Building..."
 $BUILD_CMD
 echo "Build OK."
 
-# --- Start ---
+# --- Start (secrets injected from the alice/AnB vault, never stored on disk) ---
 echo "Starting kind-reminder..."
-$BINARY >> "$LOGFILE" 2>&1 &
+ALICE="$(command -v alice || true)"
+if [ -z "$ALICE" ]; then
+  echo "ERROR: 'alice' (AnB client) not found in PATH; cannot inject secrets." >&2
+  exit 1
+fi
+ABS_BINARY="$(cd "$(dirname "$0")" && pwd)/kind-reminder"
+# alice resolves each <agent-vault:KEY> only into the child's environment.
+# Requires the binary's absolute path to be blessed in the exec allowlist.
+"$ALICE" exec \
+  --env API_TOKEN='<agent-vault:kr-api-token>' \
+  --env TELEGRAM_BOT_TOKEN='<agent-vault:kr-tg-bot-token>' \
+  --env SMTP_PASS='<agent-vault:kr-smtp-pass>' \
+  -- "$ABS_BINARY" >> "$LOGFILE" 2>&1 &
 echo $! > "$PIDFILE"
 echo "Started (PID $(cat $PIDFILE)), logs → $LOGFILE"
 

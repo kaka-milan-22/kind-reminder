@@ -36,7 +36,8 @@ reminder
 data.tar.gz
 *.tar.gz
 
-# kind-reminder runtime files
-kind-reminder
-kind-reminder.pid
-kind-reminder.log
+# kind-reminder runtime files (anchored to repo root so the skills/kind-reminder
+# directory is not swept up by the bare name)
+/kind-reminder
+/kind-reminder.pid
+/kind-reminder.log

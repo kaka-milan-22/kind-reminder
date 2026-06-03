@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -225,8 +226,10 @@ func (s *Scheduler) runJob(ctx context.Context, jobSnapshot *model.Job, execID s
 		Overrides:   overrides,
 	}
 
-	execFailed := false
-	var execErr string
+	// failedSteps collects "stepID: error" for every step that failed. Any
+	// failure marks the execution failed; continue_on_error only decides whether
+	// to keep running the remaining steps, not the final execution status.
+	var failedSteps []string
 
 	for _, step := range job.Steps {
 		exec, ok := s.executors[step.Type]
@@ -235,9 +238,8 @@ func (s *Scheduler) runJob(ctx context.Context, jobSnapshot *model.Job, execID s
 			res := model.StepResult{Status: "failed", Error: "unknown step type: " + step.Type}
 			runCtx.Results[step.StepID] = res
 			s.saveExecutionStep(ctx, execID, step, res, time.Now().UTC(), time.Now().UTC())
+			failedSteps = append(failedSteps, step.StepID+": "+res.Error)
 			if !step.ContinueOnError {
-				execFailed = true
-				execErr = res.Error
 				break
 			}
 			continue
@@ -282,15 +284,17 @@ func (s *Scheduler) runJob(ctx context.Context, jobSnapshot *model.Job, execID s
 		s.saveExecutionStep(ctx, execID, step, res, stepStart, stepEnd)
 		runCtx.Results[step.StepID] = res
 
-		if res.Status == "failed" && !step.ContinueOnError {
-			execFailed = true
-			execErr = res.Error
-			break
+		if res.Status == "failed" {
+			failedSteps = append(failedSteps, step.StepID+": "+res.Error)
+			if !step.ContinueOnError {
+				break
+			}
 		}
 	}
 
 	finished := time.Now().UTC()
-	if execFailed {
+	if len(failedSteps) > 0 {
+		execErr := strings.Join(failedSteps, "; ")
 		log.Error("execution failed", "error", execErr)
 		_ = s.store.MarkExecutionFinished(ctx, execID, model.ExecutionFailed, finished, execErr)
 	} else {

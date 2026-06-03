@@ -19,15 +19,18 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
 	cfg, err := config.Load()
 	if err != nil {
-		panic(err)
+		logger.Error("load config", "err", err)
+		os.Exit(1)
 	}
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
-		panic(err)
+		logger.Error("open store", "err", err)
+		os.Exit(1)
 	}
 	defer st.Close()
 
@@ -88,6 +91,7 @@ func main() {
 
 	logger.Info("server started", "port", cfg.ServerPort)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		panic(err)
+		logger.Error("server failed", "err", err)
+		os.Exit(1)
 	}
 }

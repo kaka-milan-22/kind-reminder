@@ -16,6 +16,40 @@ type shellConfig struct {
 	Script string `json:"script"`
 }
 
+// maxShellOutputBytes caps stdout/stderr captured per stream to avoid
+// unbounded memory growth from a runaway command.
+const maxShellOutputBytes = 64 << 10 // 64 KiB
+
+// cappedBuffer is an io.Writer that retains at most max bytes and records
+// whether any data was dropped. It always reports a full write so the
+// running command never sees a short write / error.
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if remaining := c.max - c.buf.Len(); remaining > 0 {
+		if len(p) > remaining {
+			c.buf.Write(p[:remaining])
+			c.truncated = true
+		} else {
+			c.buf.Write(p)
+		}
+	} else if len(p) > 0 {
+		c.truncated = true
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string {
+	if c.truncated {
+		return c.buf.String() + "\n[output truncated]"
+	}
+	return c.buf.String()
+}
+
 func (e *ShellExecutor) Execute(ctx context.Context, _ *model.RunContext, step model.Step) model.StepResult {
 	var cfg shellConfig
 	if err := parseConfig(step.Config, &cfg); err != nil {
@@ -26,9 +60,10 @@ func (e *ShellExecutor) Execute(ctx context.Context, _ *model.RunContext, step m
 	}
 
 	cmd := exec.CommandContext(ctx, cfg.Script)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &cappedBuffer{max: maxShellOutputBytes}
+	stderr := &cappedBuffer{max: maxShellOutputBytes}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	err := cmd.Run()
 	exitCode := 0

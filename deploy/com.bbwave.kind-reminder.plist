@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bbwave.kind-reminder</string>
+
+  <!-- Launch through alice so secrets are injected from the AnB vault into the
+       child's environment; the bob daemon must be running + unlocked. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/bbwave03/go/bin/alice</string>
+    <string>exec</string>
+    <string>--env</string>
+    <string>API_TOKEN=&lt;agent-vault:kr-api-token&gt;</string>
+    <string>--env</string>
+    <string>TELEGRAM_BOT_TOKEN=&lt;agent-vault:kr-tg-bot-token&gt;</string>
+    <string>--env</string>
+    <string>SMTP_PASS=&lt;agent-vault:kr-smtp-pass&gt;</string>
+    <string>--</string>
+    <string>/Users/bbwave03/claude/kind-reminder/kind-reminder</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bbwave03/claude/kind-reminder</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/bbwave03/go/bin:/Users/bbwave03/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/bbwave03/claude/kind-reminder/kind-reminder.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/bbwave03/claude/kind-reminder/kind-reminder.log</string>
+</dict>
+</plist>

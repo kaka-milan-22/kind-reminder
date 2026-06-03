@@ -94,7 +94,9 @@ func main() {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("server started", "port", cfg.ServerPort)
+	logger.Info("server started",
+		"port", cfg.ServerPort,
+		"dashboard", fmt.Sprintf("http://localhost:%s/ui", cfg.ServerPort))
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server failed", "err", err)
 		os.Exit(1)

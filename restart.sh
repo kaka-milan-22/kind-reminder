@@ -26,14 +26,24 @@ else
   launchctl bootstrap "$DOMAIN" "$PLIST"
 fi
 
-# Health check
-sleep 1.5
-for _ in $(seq 1 10); do
+# Health check. Cold start goes through `alice exec` (bob mTLS handshake + secret
+# resolution) before the binary even binds :8080, so give it a generous window —
+# a short timeout here false-alarms while the service is still coming up.
+echo -n "Waiting for health"
+for _ in $(seq 1 30); do
   if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
-    echo "Health check: OK ✓  → http://localhost:8080/ui"
+    echo " OK ✓  → http://localhost:8080/ui"
     exit 0
   fi
-  sleep 0.5
+  echo -n "."
+  sleep 1
 done
-echo "Health check: not responding (check $LOGFILE; ensure 'bob serve' is up for secret injection)"
+echo
+
+# Still down after the window — distinguish "launchd gave up" from "slow start".
+if launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -qE 'state = running'; then
+  echo "Health check: process is running but /health didn't answer in 30s — check $LOGFILE."
+else
+  echo "Health check: not running (check $LOGFILE; ensure 'bob serve' is up for secret injection)."
+fi
 exit 1

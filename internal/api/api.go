@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -312,8 +313,18 @@ func (s *Server) listExecutions(w http.ResponseWriter, r *http.Request) {
 	offset := parseInt(q.Get("offset"), 0)
 	includeAdhoc := q.Get("include_adhoc") == "true"
 
+	status := strings.TrimSpace(q.Get("status"))
+	switch status {
+	case "", string(model.ExecutionRunning), string(model.ExecutionSuccess), string(model.ExecutionFailed):
+		// ok
+	default:
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid status %q", status))
+		return
+	}
+
 	execs, err := s.store.ListExecutionsOpts(r.Context(), store.ListExecutionsOpts{
 		JobID:        q.Get("job_id"),
+		Status:       status,
 		Limit:        limit,
 		Offset:       offset,
 		IncludeAdhoc: includeAdhoc,

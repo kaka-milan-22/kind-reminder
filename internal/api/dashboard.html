@@ -92,16 +92,20 @@
 
 <h2>Jobs <button class="sm" onclick="toggleNewJob()" style="margin-left:6px">＋ New job</button></h2>
 <div class="card" id="newJob" style="display:none; margin-bottom:10px">
+  <div class="row" style="margin-bottom:8px; justify-content:space-between">
+    <b id="njMode">New job</b>
+    <span class="faint mono" id="njId" style="font-size:11px"></span>
+  </div>
   <div class="row" style="margin-bottom:8px">
     <input id="njTitle" placeholder="title" style="flex:2; min-width:160px">
     <input id="njCron" placeholder="cron e.g. 0 */6 * * *" style="flex:1; min-width:140px" class="mono">
     <input id="njTz" placeholder="timezone" value="Asia/Kuala_Lumpur" style="flex:1; min-width:140px">
     <label class="row" style="gap:6px"><input type="checkbox" id="njEnabled" checked style="width:auto"> enabled</label>
   </div>
-  <textarea id="njSteps" rows="8"></textarea>
+  <textarea id="njSteps" rows="10"></textarea>
   <div class="row" style="margin-top:10px">
-    <button class="primary" onclick="createJob()">Create</button>
-    <button class="sm" onclick="toggleNewJob()">Cancel</button>
+    <button class="primary" id="njSave" onclick="submitJob()">Create</button>
+    <button class="sm" onclick="closeJobForm()">Cancel</button>
     <span class="muted" id="njStatus"></span>
   </div>
 </div>
@@ -211,7 +215,9 @@ async function loadJobs() {
     if (!jobs.length) { tb.innerHTML = '<tr><td class="empty">No jobs.</td></tr>'; return; }
     tb.innerHTML = `<tr><th>Title</th><th>Cron</th><th>TZ</th><th>Next run</th><th>On</th><th></th></tr>` +
       jobs.map(j => `<tr>
-        <td>${esc(j.title)}<div class="faint mono" style="font-size:11px">${esc(j.id)}</div></td>
+        <td><span style="cursor:pointer; border-bottom:1px dotted var(--faint)" title="View / edit"
+            onclick="editJob('${j.id}')">${esc(j.title)}</span>
+          <div class="faint mono" style="font-size:11px">${esc(j.id)}</div></td>
         <td class="mono">${esc(j.cron)}</td>
         <td class="muted">${esc(j.timezone)}</td>
         <td class="muted mono" style="font-size:12px">${fmt(j.next_run_at)}</td>
@@ -219,6 +225,7 @@ async function loadJobs() {
             onchange="toggleJob('${j.id}', this.checked)"><span></span></label></td>
         <td class="row" style="gap:6px">
           <button class="sm" onclick="trigger('${j.id}', '${esc(j.title)}')">▶ Trigger</button>
+          <button class="sm" onclick="editJob('${j.id}')" title="View / edit">✎ Edit</button>
           <button class="sm" onclick="delJob('${j.id}', '${esc(j.title)}')" title="Delete job">✕</button>
         </td>
       </tr>`).join("");
@@ -236,13 +243,40 @@ const NEW_JOB_STEPS = JSON.stringify([
     continue_on_error: false }
 ], null, 2);
 
+let editingJobId = null;  // null = create mode; otherwise PATCH this job
+
+function openJobForm() { $("#newJob").style.display = "block"; $("#newJob").scrollIntoView({block: "nearest"}); }
+function closeJobForm() { $("#newJob").style.display = "none"; $("#njStatus").textContent = ""; }
+
+// Create mode: empty form with a steps template.
 function toggleNewJob() {
-  const c = $("#newJob"); const show = c.style.display === "none";
-  c.style.display = show ? "block" : "none";
-  if (show && !$("#njSteps").value) $("#njSteps").value = NEW_JOB_STEPS;
+  if ($("#newJob").style.display !== "none" && editingJobId === null) { closeJobForm(); return; }
+  editingJobId = null;
+  $("#njMode").textContent = "New job"; $("#njId").textContent = ""; $("#njSave").textContent = "Create";
+  $("#njTitle").value = ""; $("#njCron").value = ""; $("#njTz").value = "Asia/Kuala_Lumpur";
+  $("#njEnabled").checked = true; $("#njSteps").value = NEW_JOB_STEPS;
+  openJobForm();
 }
 
-async function createJob() {
+// Edit / detail: load the job and fill the form; Save will PATCH it.
+async function editJob(id) {
+  try {
+    const j = await api("GET", "/jobs/" + id);
+    editingJobId = id;
+    $("#njMode").textContent = "Edit job"; $("#njId").textContent = id; $("#njSave").textContent = "Save changes";
+    $("#njTitle").value = j.title || ""; $("#njCron").value = j.cron || "";
+    $("#njTz").value = j.timezone || ""; $("#njEnabled").checked = !!j.enabled;
+    // Strip server-only fields so the editable steps match the request shape.
+    const steps = (j.steps || []).map(s => ({
+      step_id: s.step_id, order_index: s.order_index, type: s.type,
+      config: s.config, timeout: s.timeout, retry: s.retry, continue_on_error: s.continue_on_error,
+    }));
+    $("#njSteps").value = JSON.stringify(steps, null, 2);
+    openJobForm();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function submitJob() {
   const st = $("#njStatus"); st.textContent = "";
   let steps;
   try { steps = JSON.parse($("#njSteps").value); }
@@ -255,10 +289,14 @@ async function createJob() {
     steps,
   };
   try {
-    await api("POST", "/jobs", body);
-    toast("Job created");
-    $("#njTitle").value = ""; $("#njCron").value = ""; $("#njSteps").value = "";
-    toggleNewJob(); loadJobs();
+    if (editingJobId) {
+      await api("PATCH", "/jobs/" + editingJobId, body);
+      toast("Job updated");
+    } else {
+      await api("POST", "/jobs", body);
+      toast("Job created");
+    }
+    closeJobForm(); loadJobs();
   } catch (e) { toast(e.message, true); st.textContent = e.message; }
 }
 

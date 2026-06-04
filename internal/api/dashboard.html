@@ -116,9 +116,20 @@
 
 <h2>Recent executions</h2>
 <div class="row" style="margin-bottom:8px; justify-content:space-between">
-  <label class="row muted" style="font-size:12.5px">
-    <input type="checkbox" id="incAdhoc" onchange="resetExecs()" style="width:auto"> include ad-hoc (/send)
-  </label>
+  <div class="row" style="gap:14px">
+    <label class="row muted" style="font-size:12.5px">
+      <input type="checkbox" id="incAdhoc" onchange="resetExecs()" style="width:auto"> include ad-hoc (/send)
+    </label>
+    <label class="row muted" style="font-size:12.5px; gap:6px">
+      status
+      <select id="execStatus" onchange="resetExecs()" style="width:auto">
+        <option value="">all</option>
+        <option value="failed">failed</option>
+        <option value="success">success</option>
+        <option value="running">running</option>
+      </select>
+    </label>
+  </div>
   <div class="row" style="gap:8px">
     <button class="sm" id="execPrev" onclick="pageExecs(-1)">‹ Prev</button>
     <span class="muted mono" id="execPage" style="font-size:12.5px">page 1</span>
@@ -326,8 +337,9 @@ async function loadExecs() {
   const el = $("#execs");
   try {
     const inc = $("#incAdhoc").checked ? "&include_adhoc=true" : "";
+    const st = $("#execStatus").value ? "&status=" + encodeURIComponent($("#execStatus").value) : "";
     const offset = execPage * EXEC_PAGE_SIZE;
-    const execs = await api("GET", `/executions?limit=${EXEC_PAGE_SIZE}&offset=${offset}` + inc);
+    const execs = await api("GET", `/executions?limit=${EXEC_PAGE_SIZE}&offset=${offset}` + inc + st);
     // No total count from the API: prev disabled on the first page, next disabled
     // once a short page comes back (fewer than a full page => last page).
     $("#execPage").textContent = "page " + (execPage + 1);

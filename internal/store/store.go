@@ -514,6 +514,7 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
 type ListExecutionsOpts struct {
 	JobID        string
+	Status       string
 	Limit        int
 	Offset       int
 	IncludeAdhoc bool
@@ -536,6 +537,10 @@ func (s *Store) ListExecutionsOpts(ctx context.Context, opts ListExecutionsOpts)
 	if strings.TrimSpace(opts.JobID) != "" {
 		conditions = append(conditions, "job_id=?")
 		args = append(args, opts.JobID)
+	}
+	if strings.TrimSpace(opts.Status) != "" {
+		conditions = append(conditions, "status=?")
+		args = append(args, opts.Status)
 	}
 	if !opts.IncludeAdhoc {
 		conditions = append(conditions, "job_id != '__adhoc__'")

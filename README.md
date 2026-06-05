@@ -759,3 +759,7 @@ Retry backoff：2s → 5s → 10s（固定）
 - Shell 沙箱安全隔离
 - Webhook / Notification retry（executor 级别）
 - MQ 队列后端
+
+## License
+
+MIT — see [LICENSE](LICENSE).

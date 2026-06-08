@@ -186,7 +186,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;",
 function fmt(t) { if (!t) return ""; const d = new Date(t); return isNaN(d) ? t : d.toLocaleString(); }
 function dur(a, b) { if (!a || !b) return ""; const ms = new Date(b) - new Date(a); return (ms / 1000).toFixed(1) + "s"; }
 
-async function loadAll() { loadStats(); loadJobs(); loadExecs(); loadChannels(); }
+async function loadAll() { loadStats(); loadChannels(); await loadJobs(); loadExecs(); }
 
 async function loadChannels() {
   try {
@@ -224,6 +224,7 @@ async function loadJobs() {
   const tb = $("#jobs").querySelector("tbody");
   try {
     const jobs = await api("GET", "/jobs");
+    jobTitles = Object.fromEntries(jobs.map(j => [j.id, j.title]));
     if (!jobs.length) { tb.innerHTML = '<tr><td class="empty">No jobs.</td></tr>'; return; }
     tb.innerHTML = `<tr><th>Title</th><th>Cron</th><th>TZ</th><th>Next run</th><th>On</th><th></th></tr>` +
       jobs.map(j => `<tr>
@@ -329,6 +330,8 @@ async function trigger(id, title) {
 
 const EXEC_PAGE_SIZE = 10;
 let execPage = 0;
+let jobTitles = {};  // job_id -> title, populated by loadJobs; used to label executions
+function jobLabel(id) { return id === "__adhoc__" ? "ad-hoc" : (jobTitles[id] || id); }
 
 function resetExecs() { execPage = 0; loadExecs(); }
 function pageExecs(delta) { execPage = Math.max(0, execPage + delta); loadExecs(); }
@@ -362,7 +365,10 @@ async function loadExecs() {
       return `<details class="exec">
         <summary>
           <span class="s-${e.status}" style="width:62px">${esc(e.status)}</span>
-          <span class="mono muted" style="flex:1; font-size:12px">${esc(e.job_id)}</span>
+          <span style="flex:1; min-width:0">
+            <b style="font-size:13px">${esc(jobLabel(e.job_id))}</b>
+            <span class="faint mono" style="font-size:11px"> ${esc(e.job_id)}</span>
+          </span>
           <span class="tag">${esc(e.trigger_type)}</span>
           <span class="faint mono" style="font-size:12px">${fmt(e.triggered_at)}</span>
         </summary>

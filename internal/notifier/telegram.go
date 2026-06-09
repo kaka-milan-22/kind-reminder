@@ -5,11 +5,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"crontab-reminder/internal/model"
 )
+
+// telegramMaxChars is Telegram's hard limit for a sendMessage `text` field
+// (4096 UTF-8 code points). Longer text is rejected with HTTP 400
+// "message is too long", which would fail an otherwise-successful step.
+const telegramMaxChars = 4096
+
+// truncateForTelegram caps text at telegramMaxChars runes, appending a marker
+// when it had to cut. It counts runes (not bytes) so it never splits a
+// multibyte character into invalid UTF-8.
+func truncateForTelegram(text string) string {
+	r := []rune(text)
+	if len(r) <= telegramMaxChars {
+		return text
+	}
+	const marker = "\n…[truncated]"
+	keep := telegramMaxChars - len([]rune(marker))
+	return string(r[:keep]) + marker
+}
 
 type TelegramNotifier struct {
 	token  string
@@ -28,7 +48,7 @@ func NewTelegramNotifier(token string) *TelegramNotifier {
 func (n *TelegramNotifier) Send(ctx context.Context, payload model.NotificationPayload, target string) error {
 	reqPayload := map[string]any{
 		"chat_id": target,
-		"text":    FormatNotification(payload),
+		"text":    truncateForTelegram(FormatNotification(payload)),
 	}
 	b, _ := json.Marshal(reqPayload)
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", n.token)
@@ -44,6 +64,10 @@ func (n *TelegramNotifier) Send(ctx context.Context, payload model.NotificationP
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		if desc := strings.TrimSpace(string(body)); desc != "" {
+			return fmt.Errorf("telegram status: %d: %s", resp.StatusCode, desc)
+		}
 		return fmt.Errorf("telegram status: %d", resp.StatusCode)
 	}
 	return nil

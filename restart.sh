@@ -18,13 +18,23 @@ echo "Building..."
 go build -o kind-reminder ./cmd/server
 echo "Build OK."
 
+# Restart via a full reload (bootout + bootstrap), NOT `kickstart -k`.
+# kickstart restarts in-place reusing the cached job context; right after a
+# rebuild we've seen it intermittently respawn into a bad state — `alice exec`
+# exits 78 (EX_CONFIG) and the service crash-loops even though bob is unlocked
+# and a hand-run of the same command works. A clean unload + reload re-reads
+# the plist and spawns fresh, which is reliable.
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-  echo "Restarting service (launchctl kickstart)..."
-  launchctl kickstart -k "$DOMAIN/$LABEL"
-else
-  echo "Loading LaunchAgent..."
-  launchctl bootstrap "$DOMAIN" "$PLIST"
+  echo "Unloading current instance (bootout)..."
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+  # Wait for the job to fully unload before reloading (bootout is async).
+  for _ in $(seq 1 20); do
+    launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
+    sleep 0.25
+  done
 fi
+echo "Loading LaunchAgent (bootstrap)..."
+launchctl bootstrap "$DOMAIN" "$PLIST"
 
 # Health check. Cold start goes through `alice exec` (bob mTLS handshake + secret
 # resolution) before the binary even binds :8080, so give it a generous window —
